@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#dceefb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="风之谷">
+<title>风之谷</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    background: linear-gradient(180deg, #cfe7f9 0%, #e6f3fc 38%, #f8fbfe 100%);
+    color: #1e293b;
+    display: flex; flex-direction: column;
+    min-height: 100vh;
+    padding: max(20px, env(safe-area-inset-top)) 22px max(20px, env(safe-area-inset-bottom));
+  }
+  header { text-align: center; margin: 14px 0 6px; }
+  header h1 {
+    font-size: 26px; letter-spacing: 10px; font-weight: 700;
+    background: linear-gradient(90deg, #1d6fb8, #2f8f6b);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  header .sub { margin-top: 8px; font-size: 13px; color: #5b7186; }
+  main { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; max-width: 560px; width: 100%; margin: 0 auto; }
+  .card {
+    display: flex; align-items: center; gap: 18px;
+    padding: 26px 24px; border-radius: 20px;
+    text-decoration: none; color: inherit;
+    background: #ffffff;
+    border: 1px solid #d5e5f2;
+    box-shadow: 0 10px 28px rgba(42, 94, 141, .12);
+    transition: transform .12s ease;
+    min-height: 112px;
+  }
+  .card:active { transform: scale(.97); }
+  .card .emoji {
+    font-size: 44px; width: 76px; height: 76px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 18px;
+  }
+  .card.book .emoji  { background: linear-gradient(145deg, #e4f1fb, #d2e8f8); }
+  .card.music .emoji { background: linear-gradient(145deg, #e0f4ea, #cdeeda); }
+  .card .info { flex: 1; min-width: 0; }
+  .card .name { font-size: 21px; font-weight: 700; color: #17324d; display: flex; align-items: center; gap: 10px; }
+  .card .desc { margin-top: 7px; font-size: 13.5px; color: #6b7f93; }
+  .st { width: 11px; height: 11px; border-radius: 50%; background: #9db0c2; flex: none; display: inline-block; }
+  .st.ok   { background: #2cb673; box-shadow: 0 0 7px #2cb67388; }
+  .st.down { background: #e0564f; box-shadow: 0 0 7px #e0564f88; }
+  footer { text-align: center; font-size: 12px; color: #7d93a7; padding-top: 16px; line-height: 1.8; }
+  footer .addr { color: #51708a; }
+  @media (max-width: 420px) {
+    header h1 { font-size: 23px; letter-spacing: 8px; }
+    .card { padding: 22px 18px; min-height: 104px; }
+    .card .emoji { font-size: 36px; width: 64px; height: 64px; }
+    .card .name { font-size: 19px; }
+  }
+</style>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/wind-180.png">
+<link rel="icon" href="./icons/wind-192.png">
+</head>
+<body>
+<header>
+  <h1>风之谷</h1>
+  <div class="sub" id="greet"></div>
+</header>
+<main>
+  <a class="card book" href="/reader.html">
+    <div class="emoji">📚</div>
+    <div class="info">
+      <div class="name">赵群书屋 <span class="st" id="st-book"></span></div>
+      <div class="desc">看书 · 听书 · 进度自动保存</div>
+    </div>
+  </a>
+  <a class="card music" id="btn-music" href="#">
+    <div class="emoji">🎵</div>
+    <div class="info">
+      <div class="name">赵群音乐厅 <span class="st" id="st-music"></span></div>
+      <div class="desc">249 首热歌 · 精选 MV · 全格式解码</div>
+    </div>
+  </a>
+</main>
+<footer>
+  手机（蒲公英通道）：<span class="addr">http://172.16.1.130:8090/portal.html</span><br>
+  风之谷 · 阿布为 Leader 打造
+</footer>
+<script src="./config.js"></script>
+<script>
+(function () {
+  var CFG = Object.assign({ mode: "server", books: "data/books.json", homeMusic: "" }, window.ZQ_CONFIG || {});
+  var STATIC = CFG.mode === "static";
+  var host = location.hostname;
+
+  // 书屋：本地服务端走 /reader.html；静态托管时书屋就在同一个站里
+  document.querySelector(".card.book").href = STATIC ? "./reader.html" : "/reader.html";
+
+  // 音乐厅：本地服务端用「当前主机名:8088」；静态托管版走配置里的家里地址（蒲公英/局域网）
+  var musicUrl = STATIC
+    ? (CFG.homeMusic || "http://172.16.1.130:8088/player.html")
+    : "http://" + host + ":8088/player.html";
+  document.getElementById("btn-music").href = musicUrl;
+  if (STATIC) {
+    document.querySelector(".card.music .desc").textContent = "249 首热歌 · 精选 MV · 需电脑开机 + 蒲公英在线";
+  }
+
+  var h = new Date().getHours();
+  var greet = h < 5 ? "夜深了，Leader" : h < 9 ? "早上好，Leader" : h < 12 ? "上午好，Leader"
+            : h < 14 ? "中午好，Leader" : h < 18 ? "下午好，Leader" : "晚上好，Leader";
+  var d = new Date();
+  var wd = ["日","一","二","三","四","五","六"][d.getDay()];
+  document.getElementById("greet").textContent =
+    greet + " · " + (d.getMonth()+1) + "月" + d.getDate() + "日 周" + wd;
+
+  function set(id, ok) {
+    var el = document.getElementById(id);
+    el.className = "st " + (ok ? "ok" : "down");
+  }
+  fetch(STATIC ? CFG.books : "/api/books", { cache: "no-store" })
+    .then(function (r) { set("st-book", r.ok); })
+    .catch(function () { set("st-book", false); });
+  fetch(musicUrl, { mode: "no-cors", cache: "no-store" })
+    .then(function () { set("st-music", true); })
+    .catch(function () { set("st-music", false); });
+
+  // 页脚：静态托管时显示在线地址
+  if (STATIC) {
+    document.querySelector("footer .addr").textContent = location.origin + "/index.html";
+    document.querySelector("footer").firstChild.textContent = "在线地址：";
+  }
+})();
+</script>
+</body>
+</html>

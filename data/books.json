@@ -1,0 +1,20 @@
+{
+ "books": [
+  {
+   "id": "5e3ed61f0bea",
+   "title": "李白诗选",
+   "author": "李白",
+   "ext": "epub",
+   "size": 19748,
+   "cover": "covers/5e3ed61f0bea.png"
+  },
+  {
+   "id": "8ccfaaac0919",
+   "title": "论语·精选",
+   "author": "",
+   "ext": "txt",
+   "size": 4423,
+   "cover": null
+  }
+ ]
+}
