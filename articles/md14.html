@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy 实战 · 用无头浏览器给前端做自动化验证：零依赖方案</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#faf7f2;color:#2b2620;
+ font:16px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:44px 22px 90px}
+.back{display:inline-block;margin-bottom:26px;color:#c8553d;text-decoration:none;font-size:14px}
+.back:hover{text-decoration:underline}
+h1{font-size:29px;line-height:1.4;margin:0 0 10px;letter-spacing:-.3px}
+h2{font-size:21px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid #e8e0d5}
+h3{font-size:17.5px;margin:30px 0 10px}
+p{margin:15px 0}
+strong{color:#1a1611}
+blockquote{margin:20px 0;padding:13px 20px;border-left:3px solid #d9694f;
+ background:#f6efe6;border-radius:0 7px 7px 0;color:#544a3e}
+pre.code{margin:20px 0;padding:17px 19px;background:#241f1a;color:#e8e0d5;
+ border-radius:9px;overflow-x:auto;font-size:13.5px;line-height:1.65;position:relative}
+pre.code code{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;white-space:pre}
+pre.code::before{content:attr(data-lang);position:absolute;top:7px;right:11px;
+ font-size:11px;color:#6f6357;text-transform:lowercase}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:14.5px}
+th,td{border:1px solid #e2d8ca;padding:9px 12px;text-align:left;vertical-align:top}
+th{background:#f1e9dd;font-weight:600}
+tr:nth-child(even) td{background:#fbf8f4}
+ul,ol{padding-left:25px;margin:15px 0}
+li{margin:7px 0}
+hr{border:0;border-top:1px solid #e8e0d5;margin:34px 0}
+.meta{color:#8b7d6d;font-size:13.5px;margin:0 0 30px}
+@media(max-width:520px){h1{font-size:23px}.wrap{padding:28px 17px 70px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="./">← 全部文章</a>
+<blockquote>前端改完样式，怎么确认没写崩？用 WorkBuddy 把这套验证流程自动化了——无头浏览器截图，零依赖，跑一条命令就出结果。</blockquote>
+<blockquote>本文属于 <strong>WorkBuddy 实战笔记</strong>系列。</blockquote>
+<h2>为什么要做这个</h2>
+<p>写完一个前端页面之后，我习惯先看一眼「到底长什么样」再交付。</p>
+<p>传统做法是让人打开浏览器瞄一眼。但有两个问题：</p>
+<ol><li><strong>人工检查不稳定</strong> —— 这次看了，下次改完还得再看</li><li><strong>不同尺寸的适配没法逐个人工验</strong> —— 桌面 880px、手机 414px、平板 768px，一个个手动缩放太累</li></ol>
+<p>于是想用<strong>无头浏览器 + 截图</strong>做自动化验证：跑一条命令，出一张图，直接看渲染结果。</p>
+<h2>方案：用系统自带的浏览器，不装任何依赖</h2>
+<p>第一反应是 Puppeteer / Playwright。但这两个都要下载 Chromium（500MB 左右），<strong>为了截个图装这么大一坨不太值</strong>。</p>
+<p><strong>Windows 上有个现成的选择：Edge。</strong></p>
+<pre class="code" data-lang="python"><code>EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+args = [
+    EDGE,
+    "--headless=new",              # 无头模式
+    "--disable-gpu",
+    "--no-sandbox",
+    "--hide-scrollbars",           # 隐藏滚动条，截图更干净
+    "--virtual-time-budget=8000",  # 虚拟时间预算，等页面渲染
+    "--window-size=880,1500",      # 视口尺寸
+    "--screenshot=out.png",        # 输出路径
+    url,
+]
+
+subprocess.run(args, timeout=120)</code></pre>
+<p><strong>跑完直接得到一张 PNG。</strong> 不需要 npm、不需要 pip install、不需要下载浏览器。</p>
+<p>Chrome 的路径也一样：</p>
+<pre class="code" data-lang="python"><code>CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"</code></pre>
+<h2>关键参数解释</h2>
+<h3>`--headless=new`</h3>
+<p>无头模式。<strong>注意要用 `new`</strong>，旧的无头模式（`--headless`）在新版浏览器里已经废弃了。</p>
+<h3>`--virtual-time-budget`</h3>
+<p><strong>这个参数最容易踩坑。</strong></p>
+<p>它的作用是：让浏览器在「虚拟时间」内尽量跑完页面逻辑，然后截图。单位是毫秒。</p>
+<ul><li>值太小 → 页面还没渲染完就截图，得到空白页</li><li>值太大 → 等待时间长</li></ul>
+<p><strong>我的经验值</strong>：</p>
+<ul><li>纯静态页面：`3000`</li><li>有异步请求的页面：`8000`</li><li>有大量网络请求的页面：`15000-20000`</li></ul>
+<p><strong>注意</strong>：虚拟时间不是真实时间。它让定时器「快进」，但<strong>不会真的等网络请求返回</strong>。如果页面依赖外部网络，可能还是截不到。</p>
+<h2>让页面「自己动」：注入驱动脚本</h2>
+<p>截静态页面很简单，但我想验证的是<strong>交互后的状态</strong>（比如搜索结果列表）。</p>
+<p>做法：<strong>造一个临时页面，在原页面基础上注入一段自动执行的脚本。</strong></p>
+<pre class="code" data-lang="python"><code>src = open("page.html", encoding="utf-8").read()
+
+AUTO = """
+&lt;script&gt;
+(async function(){
+  await new Promise(r =&gt; setTimeout(r, 600));
+  document.getElementById('q').value = '关键词';
+  document.getElementById('go').click();      // 自动点搜索
+})();
+&lt;/script&gt;
+"""
+
+# 把脚本插到 &lt;/body&gt; 之前
+tmp = src.replace("&lt;/body&gt;", AUTO + "&lt;/body&gt;")
+open("page_auto.html", "w", encoding="utf-8").write(tmp)</code></pre>
+<p>然后截 `page_auto.html`，就能拿到「搜索后」的状态。</p>
+<h2>踩坑：临时页面被 404</h2>
+<p><strong>这是我在这个方案上唯一卡住的地方。</strong></p>
+<p>我一开始把临时页面写成 `_auto.html`，放在服务目录下，然后访问 `http://127.0.0.1:8099/_auto.html`。</p>
+<p><strong>结果：404。</strong></p>
+<p>原因是：<strong>我的服务只对白名单里的文件名提供访问。</strong></p>
+<pre class="code" data-lang="python"><code>def do_GET(self):
+    path = urlparse(self.path).path
+    if path in ("/", "/index.html", "/finder.html"):
+        return self.serve_file("finder.html")
+    if path == "/manifest.json":
+        return self.serve_file("manifest.json")
+    # ... 其他白名单 ...
+    return self._json({"error": "not found"}, 404)   # 其他一律 404</code></pre>
+<p>这个设计本身是对的——<strong>限制暴露面</strong>，不应该什么文件都能访问。但它导致我随便丢个临时文件进去，服务不认。</p>
+<h3>解决办法：临时替换 + 用完还原</h3>
+<p>不用新增路由，直接<strong>覆盖原页面文件</strong>，截完再还原：</p>
+<pre class="code" data-lang="python"><code>import shutil
+
+target = "finder.html"
+backup = "finder.html.bak"
+
+shutil.copy2(target, backup)          # 1. 备份原文件
+try:
+    open(target, "w", encoding="utf-8").write(注入版内容)
+    shot("preview.png")               # 2. 截图
+finally:
+    shutil.move(backup, target)       # 3. 无论如何都还原</code></pre>
+<p><strong>用 `try/finally` 保证还原</strong>——哪怕截图失败，原文件也不会被留在被覆盖的状态。</p>
+<h2>另一个坑：页面里的网络请求</h2>
+<p>如果页面加载时要调接口，而接口<strong>本身很慢</strong>（比如要几十秒），那截图时页面还是空的。</p>
+<p><strong>我的做法是「拦截请求，喂假数据」</strong>：在注入的脚本里劫持 `fetch`：</p>
+<pre class="code" data-lang="javascript"><code>window.__DEMO__ = { /* 预先取好的真实数据 */ };
+
+(function(){
+  const origFetch = window.fetch;
+  window.fetch = function(url, opt) {
+    if (String(url).indexOf('/api/search') === 0) {
+      // 搜索接口直接返回预取的数据，不走网络
+      return Promise.resolve({ json: () =&gt; Promise.resolve(window.__DEMO__) });
+    }
+    return origFetch(url, opt);     // 其他请求照常
+  };
+  // 然后触发搜索
+  document.getElementById('go').click();
+})();</code></pre>
+<p><strong>注意 `window.__DEMO__` 里塞的是「预先用真实接口取好的数据」</strong>——这样截出来的图跟真实效果一致，又能避开等待。</p>
+<h2>多尺寸验证</h2>
+<p>同一套代码，换个 `--window-size` 就能验证不同设备：</p>
+<pre class="code" data-lang="python"><code>shot("desktop", w=880,  h=1500)   # 桌面
+shot("mobile",  w=414,  h=950)    # iPhone 尺寸
+shot("tablet",  w=768,  h=1024)   # iPad 尺寸</code></pre>
+<p><strong>我的习惯是先看桌面版，再看 414px。</strong> 414px 是最窄的常见手机宽度，能在这里不溢出，基本就没问题。</p>
+<h2>实测结果</h2>
+<p>用这套方案验证了一个列表页：</p>
+<table><thead><tr><th>检查项</th><th>结果</th></tr></thead><tbody><tr><td>桌面版（880px）</td><td>✅ 内容完整，无溢出</td></tr><tr><td>手机版（414px）</td><td>✅ 布局正常折行</td></tr><tr><td>外部图片加载</td><td>✅ 全部正常</td></tr><tr><td>交互后状态</td><td>✅ 成功触发并截取</td></tr></tbody></table>
+<p><strong>整个过程不到 10 秒</strong>（不含页面本身的网络等待）。</p>
+<h2>三条经验</h2>
+<p><strong>第一，能用系统浏览器就别装 Playwright。</strong></p>
+<p>Edge / Chrome 的 `--headless=new` 已经能覆盖大部分截图需求。<strong>只在需要复杂交互（多步点击、表单填写、Cookie 管理）时才考虑上 Playwright。</strong></p>
+<p><strong>第二，注入脚本比手动操作可靠。</strong></p>
+<p>「打开页面 → 手动点按钮 → 截图」这种流程没法自动化。<strong>把操作写进注入的脚本里，一条命令跑完全程。</strong></p>
+<p><strong>第三，临时文件用完一定要还原，而且要用 `try/finally`。</strong></p>
+<p>我覆盖 `finder.html` 做演示的时候，如果中途抛异常没还原，<strong>服务就会一直返回演示版页面</strong>——这是很危险的状态。`try/finally` 是底线。</p>
+<hr>
+<p><em>本文记录的是实际开发过程。</em></p>
+</div>
+</body>
+</html>
