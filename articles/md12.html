@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy 实战 · 把命令行工具包成三端网页：一个输入框、一个按钮</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#faf7f2;color:#2b2620;
+ font:16px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:44px 22px 90px}
+.back{display:inline-block;margin-bottom:26px;color:#c8553d;text-decoration:none;font-size:14px}
+.back:hover{text-decoration:underline}
+h1{font-size:29px;line-height:1.4;margin:0 0 10px;letter-spacing:-.3px}
+h2{font-size:21px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid #e8e0d5}
+h3{font-size:17.5px;margin:30px 0 10px}
+p{margin:15px 0}
+strong{color:#1a1611}
+blockquote{margin:20px 0;padding:13px 20px;border-left:3px solid #d9694f;
+ background:#f6efe6;border-radius:0 7px 7px 0;color:#544a3e}
+pre.code{margin:20px 0;padding:17px 19px;background:#241f1a;color:#e8e0d5;
+ border-radius:9px;overflow-x:auto;font-size:13.5px;line-height:1.65;position:relative}
+pre.code code{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;white-space:pre}
+pre.code::before{content:attr(data-lang);position:absolute;top:7px;right:11px;
+ font-size:11px;color:#6f6357;text-transform:lowercase}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:14.5px}
+th,td{border:1px solid #e2d8ca;padding:9px 12px;text-align:left;vertical-align:top}
+th{background:#f1e9dd;font-weight:600}
+tr:nth-child(even) td{background:#fbf8f4}
+ul,ol{padding-left:25px;margin:15px 0}
+li{margin:7px 0}
+hr{border:0;border-top:1px solid #e8e0d5;margin:34px 0}
+.meta{color:#8b7d6d;font-size:13.5px;margin:0 0 30px}
+@media(max-width:520px){h1{font-size:23px}.wrap{padding:28px 17px 70px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="./">← 全部文章</a>
+<blockquote>我有个命令行工具，平时只能在电脑上敲命令。想让它变成手机也能点的网页，用 WorkBuddy 干了一个下午就搞定了——一个输入框、一个按钮，就这么简单。</blockquote>
+<blockquote>本文属于 <strong>WorkBuddy 实战笔记</strong>系列。</blockquote>
+<h2>起因</h2>
+<p>我在本地维护一个自建的媒体库服务，配套有一个命令行工具，能检索、能下载。用起来有个问题：<strong>每次都要开命令行敲参数。</strong></p>
+<pre class="code" data-lang="text"><code>tool.bat --id 26610712:def1ec</code></pre>
+<p>对我来说还行，但对家里其他人就不友好了——没人愿意记参数。而且更麻烦的是：<strong>手机上用不了。</strong></p>
+<p>于是想把命令行工具包成一个网页：<strong>输关键词 → 点搜索 → 点下载</strong>，电脑手机都能用。</p>
+<h2>技术选型：越轻越好</h2>
+<p>考虑过几个方案：</p>
+<table><thead><tr><th>方案</th><th>优点</th><th>缺点</th></tr></thead><tbody><tr><td>Electron 桌面应用</td><td>体验好</td><td>体积大，手机没法用</td></tr><tr><td>单独写 iOS/安卓 App</td><td>原生体验</td><td>要两台设备分别开发，成本高</td></tr><tr><td><strong>本地网页 + PWA</strong></td><td><strong>一套代码三端通用</strong></td><td>需要本机常开</td></tr></tbody></table>
+<p><strong>选了第三个。</strong> 理由很实在：</p>
+<ul><li><strong>一套代码，三个平台</strong>：Windows 浏览器直接开、iOS Safari 和安卓 Chrome 都能「添加到主屏幕」</li><li><strong>零安装成本</strong>：不用上架、不用签名、不用审核</li><li><strong>后端复用现成工具</strong>：不用重写逻辑，包一层就行</li></ul>
+<h2>后端：包一层 HTTP 服务</h2>
+<p>核心思路是<strong>把命令行的能力映射成 HTTP 接口</strong>。</p>
+<p>用 Python 标准库写（不装任何第三方依赖）：</p>
+<pre class="code" data-lang="python"><code>import http.server, subprocess, json
+
+TOOL = r"C:\path\to\tool.exe"
+
+def run_tool(args, timeout=180):
+    """执行命令行工具，返回 (成功?, 标准输出, 标准错误)"""
+    r = subprocess.run([TOOL] + args, capture_output=True, timeout=timeout)
+    out = r.stdout.decode("utf-8", errors="replace").strip()
+    err = r.stderr.decode("utf-8", errors="replace").strip()
+    return r.returncode == 0, out, err</code></pre>
+<p><strong>接口设计</strong>：</p>
+<table><thead><tr><th>接口</th><th>方法</th><th>作用</th></tr></thead><tbody><tr><td>`/api/search?q=关键词`</td><td>GET</td><td>搜索</td></tr><tr><td>`/api/download`</td><td>POST</td><td>发起下载</td></tr><tr><td>`/api/task/&lt;id&gt;`</td><td>GET</td><td>查下载进度</td></tr><tr><td>`/api/quota`</td><td>GET</td><td>查配额</td></tr></tbody></table>
+<h2>关键点一：优先用工具的 JSON 输出</h2>
+<p><strong>这是省事最多的一步。</strong></p>
+<p>我一开始打算解析命令行工具输出的<strong>表格文本</strong>，写了一半发现很痛苦——要处理对齐、截断、中文宽度。</p>
+<p>后来翻文档发现它支持 `--json`：</p>
+<pre class="code" data-lang="bash"><code>tool.exe search "关键词" --json -n 30</code></pre>
+<p>输出直接就是结构化数据：</p>
+<pre class="code" data-lang="json"><code>{
+  "items": [
+    {
+      "id": "26610712:def1ec",
+      "name": "示例条目",
+      "authors": ["某某"],
+      "extension": "epub",
+      "size": "2.48 MB",
+      "cover": "https://.../cover.jpg"
+    }
+  ],
+  "page": 1,
+  "total_pages": 250
+}</code></pre>
+<p><strong>代码量直接砍掉一大半。</strong> 以前要写文本解析，现在只要 `json.loads()` 然后挑字段。</p>
+<p><strong>顺带一个好处</strong>：JSON 里带了<strong>封面图片 URL</strong>，前端可以直接显示。如果是解析表格文本，封面信息根本拿不到。</p>
+<h3>但 JSON 不一定干净</h3>
+<p>实际跑起来发现，有些命令的输出里<strong>会混入进度提示或日志</strong>，直接 `json.loads()` 会报错。</p>
+<p>写个容错函数：</p>
+<pre class="code" data-lang="python"><code>def extract_json(text):
+    """从可能混入日志的输出里抠出 JSON"""
+    text = text.strip()
+    try:
+        return json.loads(text)          # 直接就是 JSON
+    except Exception:
+        pass
+    i, j = text.find("{"), text.rfind("}")   # 找第一个 { 到最后一个 }
+    if i &gt;= 0 and j &gt; i:
+        try:
+            return json.loads(text[i:j + 1])
+        except Exception:
+            pass
+    return None</code></pre>
+<p>思路很简单：<strong>先试直接解析，不行就把首尾大括号之间的内容截出来再试。</strong></p>
+<h2>关键点二：下载必须走后台，不能阻塞</h2>
+<p><strong>这是体验上最关键的一步。</strong></p>
+<p>下载一个文件可能要几十秒。如果同步处理，会遇到两个问题：</p>
+<ol><li>用户点了下载，页面转圈，<strong>没法继续搜别的内容</strong></li><li>HTTP 请求超时（一般服务端 30-60 秒就掐了）</li></ol>
+<p><strong>改成异步任务模式</strong>：</p>
+<pre class="code" data-lang="python"><code>TASKS = {}          # 任务表
+TASKS_LOCK = threading.Lock()
+
+def download_worker(tid, item_id, title):
+    """后台下载线程"""
+    def set_state(**kw):
+        with TASKS_LOCK:
+            TASKS[tid].update(kw)
+
+    set_state(status="running", msg="正在连接…")
+    ok, out, err = run_tool(["download", item_id, "-d", SAVE_DIR], timeout=900)
+
+    if not ok:
+        set_state(status="error", msg="下载失败")
+        return
+    set_state(status="done", msg="已入库")
+
+# 接口里只负责起线程
+tid = uuid.uuid4().hex[:12]
+TASKS[tid] = {"tid": tid, "status": "queued", "started": time.time()}
+threading.Thread(target=download_worker, args=(tid, item_id, title), daemon=True).start()
+return {"tid": tid}</code></pre>
+<p>前端拿到 `tid` 之后<strong>每 2 秒轮询一次</strong>：</p>
+<pre class="code" data-lang="javascript"><code>function poll(tid, btn) {
+  const t = setInterval(async () =&gt; {
+    const d = await fetch("/api/task/" + tid).then(r =&gt; r.json());
+    if (d.status === "running") { btn.textContent = "下载中…"; }
+    else if (d.status === "done") {
+      clearInterval(t);
+      btn.textContent = "✓ 已完成";
+    } else if (d.status === "error") {
+      clearInterval(t);
+      btn.textContent = "重试";
+    }
+  }, 2000);
+}</code></pre>
+<p><strong>效果</strong>：点完下载立刻能继续搜别的，下载状态在按钮上实时更新。</p>
+<h3>一个容易漏的细节：加锁</h3>
+<p>`TASKS` 是被多个线程同时读写的字典（主线程写、下载线程写、查询接口读）。Python 的 GIL 虽然保证单条操作原子，但<strong>「读-改-写」这种复合操作不是原子的</strong>。</p>
+<p>所以所有对 `TASKS` 的操作都套上锁：</p>
+<pre class="code" data-lang="python"><code>with TASKS_LOCK:
+    TASKS[tid].update(kw)</code></pre>
+<p>不加锁的话，并发下载多个任务时状态可能串。</p>
+<h2>关键点三：PWA 让网页变成 App</h2>
+<p><strong>这是「三端通用」的关键。</strong></p>
+<p>PWA（渐进式 Web 应用）的核心就一个 `manifest.json`：</p>
+<pre class="code" data-lang="json"><code>{
+  "name": "我的工具",
+  "short_name": "工具",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#c8553d",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}</code></pre>
+<p>关键字段是 `"display": "standalone"` —— <strong>它让网页去掉浏览器地址栏，看起来就是一个独立 App。</strong></p>
+<p>在 HTML 里引一下：</p>
+<pre class="code" data-lang="html"><code>&lt;link rel="manifest" href="/manifest.json"&gt;
+&lt;link rel="apple-touch-icon" href="/icon.svg"&gt;
+&lt;meta name="apple-mobile-web-app-capable" content="yes"&gt;</code></pre>
+<p>然后各端的「安装」方式：</p>
+<table><thead><tr><th>平台</th><th>操作</th></tr></thead><tbody><tr><td>iOS Safari</td><td>分享 → 添加到主屏幕</td></tr><tr><td>安卓 Chrome</td><td>菜单 → 添加到主屏幕</td></tr><tr><td>Windows Edge</td><td>菜单 → 应用 → 安装此站点为应用</td></tr></tbody></table>
+<p><strong>装完之后就是个图标，点开直接进，没有地址栏。</strong></p>
+<h3>图标用 SVG 内置</h3>
+<p>不用准备多种尺寸的 PNG，直接写一个 SVG：</p>
+<pre class="code" data-lang="html"><code>&lt;svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"&gt;
+  &lt;defs&gt;
+    &lt;linearGradient id="g" x1="0" y1="0" x2="1" y2="1"&gt;
+      &lt;stop offset="0%" stop-color="#d9694f"/&gt;
+      &lt;stop offset="100%" stop-color="#b8452f"/&gt;
+    &lt;/linearGradient&gt;
+  &lt;/defs&gt;
+  &lt;rect width="192" height="192" rx="42" fill="url(#g)"/&gt;
+  &lt;!-- 自定义图形 --&gt;
+&lt;/svg&gt;</code></pre>
+<p>一个文件搞定所有尺寸，浏览器会自己缩放。</p>
+<h2>三端地址的组织</h2>
+<p>程序跑起来后，打印三个访问地址：</p>
+<table><thead><tr><th>场景</th><th>地址</th><th>前提</th></tr></thead><tbody><tr><td>本机</td><td>`http://127.0.0.1:8099/`</td><td>就在这台机器上用</td></tr><tr><td>局域网</td><td>`http://192.168.x.x:8099/`</td><td>手机连同一个 Wi-Fi</td></tr><tr><td>虚拟局域网</td><td>`http://172.16.x.x:8099/`</td><td>需组网工具在线</td></tr></tbody></table>
+<p>获取局域网 IP 有个小技巧——<strong>不用解析 `ipconfig` 输出</strong>：</p>
+<pre class="code" data-lang="python"><code>import socket
+
+def get_lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))     # 不会真的发数据
+        return s.getsockname()[0]       # 但会告诉你走的是哪个网卡
+    finally:
+        s.close()</code></pre>
+<p>UDP 的 `connect` 只是<strong>让系统选一条路由</strong>，不会真的发包。比解析 `ipconfig` 输出（还要处理中文编码）可靠得多。</p>
+<h2>实测结果</h2>
+<table><thead><tr><th>项目</th><th>结果</th></tr></thead><tbody><tr><td>搜索</td><td>30 条结果，封面全部加载</td></tr><tr><td>下载一个 2.2 MB 文件</td><td><strong>6 秒</strong>完成</td></tr><tr><td>配额扣减</td><td>✅ 正确</td></tr><tr><td>与主服务联动</td><td>✅ 自动识别新文件</td></tr><tr><td>桌面版渲染</td><td>✅ 880px 无溢出</td></tr><tr><td>手机版渲染</td><td>✅ 414px 无溢出</td></tr></tbody></table>
+<p><strong>闭环成立</strong>：网页搜索 → 后台下载 → 落到目标目录 → 主服务直接认。</p>
+<h2>三条经验</h2>
+<p><strong>第一，先找 JSON 输出，再考虑解析文本。</strong></p>
+<p>命令行工具如果支持结构化输出，一定要用。省下的不只是代码量——<strong>JSON 里往往有表格里被截断的字段</strong>（比如封面 URL），这些用文本解析根本拿不到。</p>
+<p><strong>第二，耗时操作一律异步化。</strong></p>
+<p>「发起任务 → 返回任务号 → 轮询状态」这个模式，比同步等待的体验好太多。而且实现成本很低，一个线程 + 一个字典就够了。<strong>别忘了加锁。</strong></p>
+<p><strong>第三，PWA 是覆盖三端成本最低的方案。</strong></p>
+<p>一套 HTML 同时解决桌面、iOS、安卓。虽然有些能力不如原生（比如推送、后台任务），但对于「用手机查个数据、下个文件」这类场景，<strong>完全够用，而且零维护成本。</strong></p>
+<hr>
+<p><em>本文记录的是实际开发过程，所有数据来自真实测试。</em></p>
+</div>
+</body>
+</html>
