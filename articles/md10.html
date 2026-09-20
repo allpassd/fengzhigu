@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy 实战 · 大模型 API Key 的三种 401：我实测出的错误码对照表</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#faf7f2;color:#2b2620;
+ font:16px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:44px 22px 90px}
+.back{display:inline-block;margin-bottom:26px;color:#c8553d;text-decoration:none;font-size:14px}
+.back:hover{text-decoration:underline}
+h1{font-size:29px;line-height:1.4;margin:0 0 10px;letter-spacing:-.3px}
+h2{font-size:21px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid #e8e0d5}
+h3{font-size:17.5px;margin:30px 0 10px}
+p{margin:15px 0}
+strong{color:#1a1611}
+blockquote{margin:20px 0;padding:13px 20px;border-left:3px solid #d9694f;
+ background:#f6efe6;border-radius:0 7px 7px 0;color:#544a3e}
+pre.code{margin:20px 0;padding:17px 19px;background:#241f1a;color:#e8e0d5;
+ border-radius:9px;overflow-x:auto;font-size:13.5px;line-height:1.65;position:relative}
+pre.code code{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;white-space:pre}
+pre.code::before{content:attr(data-lang);position:absolute;top:7px;right:11px;
+ font-size:11px;color:#6f6357;text-transform:lowercase}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:14.5px}
+th,td{border:1px solid #e2d8ca;padding:9px 12px;text-align:left;vertical-align:top}
+th{background:#f1e9dd;font-weight:600}
+tr:nth-child(even) td{background:#fbf8f4}
+ul,ol{padding-left:25px;margin:15px 0}
+li{margin:7px 0}
+hr{border:0;border-top:1px solid #e8e0d5;margin:34px 0}
+.meta{color:#8b7d6d;font-size:13.5px;margin:0 0 30px}
+@media(max-width:520px){h1{font-size:23px}.wrap{padding:28px 17px 70px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="./">← 全部文章</a>
+<blockquote>给自建服务接 AI 分析能力时，我在 API Key 这一步来回折腾了三次。这篇把实测出的错误码对照表整理出来——都是真实测试结果，不是抄文档。</blockquote>
+<blockquote>本文属于 <strong>WorkBuddy 实战笔记</strong>系列。</blockquote>
+<h2>事情起因</h2>
+<p>给自建的书库服务接 AI 分析能力，需要调大模型 API。按理说这步很简单——注册、拿 Key、填进配置、跑通。</p>
+<p>结果在这一步卡了将近一小时，来回折腾了 <strong>三次</strong> 才成功。</p>
+<p>有意思的是：<strong>三次失败报的都是 401，但错误码完全不一样，含义也完全不同。</strong> 网上搜「大模型 API 401」出来的文章基本只讲「Key 填错了」，实际上远不止这一种情况。</p>
+<p>我把实测结果整理成对照表，希望能帮后来的人少走弯路。</p>
+<h2>三种 401 的实测对照</h2>
+<table><thead><tr><th>错误码</th><th>报错原文</th><th>实际含义</th><th>触发原因</th></tr></thead><tbody><tr><td>`1000`</td><td>身份验证失败</td><td><strong>格式合法但 Key 查不到</strong></td><td>Key 已被删除，或不是最新的那个</td></tr><tr><td>`401`</td><td>令牌已过期或验证不正确</td><td><strong>格式不完整</strong></td><td>只复制了 Key 的一半</td></tr><tr><td>`1004`</td><td>通过 Authentication Token 的验证失败</td><td><strong>Key 被顶掉了</strong></td><td>同项目下新建了 Key，旧的立即失效</td></tr></tbody></table>
+<h2>逐个拆解</h2>
+<h3>第一种：`1000` 身份验证失败</h3>
+<p><strong>这个是误导性最强的。</strong></p>
+<p>因为它说的是「身份验证失败」，第一反应一定是「我 Key 填错了」。但实际测下来，<strong>格式是对的</strong>。</p>
+<p>我是这么定位的：故意把 Key 拆成前段和后段分别测试。</p>
+<pre class="code" data-lang="text"><code>Bearer 完整Key（带点）    → 1000 身份验证失败
+Bearer 只用前段           → 401  令牌已过期或验证不正确
+Bearer 只用后段           → 401  令牌已过期或验证不正确</code></pre>
+<p><strong>关键发现</strong>：残缺的 Key 报的是 `401`，完整的 Key 报的是 `1000`。</p>
+<p>这说明服务端<strong>认得 Key 的格式结构</strong>（前段.后段），只是这个 Key 在数据库里找不到。</p>
+<p>结合平台规则看就明白了：</p>
+<blockquote>API Key 仅在创建时完整展示一次，后续无法查看或恢复。</blockquote>
+<p>所以 `1000` 的真实含义是：<strong>Key 格式没问题，但这个 Key 不存在了</strong>——要么被删了，要么过期了，要么你复制的是好几个版本之前的。</p>
+<p><strong>处理办法</strong>：直接重新建一个，别在这个 Key 上浪费时间。</p>
+<h3>第二种：`401` 令牌已过期或验证不正确</h3>
+<p><strong>这个才是真正的「格式不对」</strong>，而且原因往往很隐蔽。</p>
+<p>大模型平台的 Key 通常是<strong>两段式</strong>结构：</p>
+<pre class="code" data-lang="text"><code>xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxx
+└────── 32位十六进制 ──────┘ └─── 一段随机串 ───┘
+                           ↑
+                      中间这个点很关键</code></pre>
+<p><strong>我是怎么踩进去的</strong>：从网页复制时，只选中了前半段（鼠标拖选没拖全），后半段漏了。前半段看起来很像一个完整的 Key，所以完全没察觉。</p>
+<p>还有一种情况：复制时<strong>连带把页面上的说明文字一起复制了</strong>。比如页面上写着「密钥」两个字，复制出来的内容就变成 `xxxx.xxxx密钥`，混入中文直接失效。</p>
+<p><strong>处理办法</strong>：</p>
+<ol><li>复制后<strong>先粘到记事本</strong>，肉眼确认形态</li><li>检查三件事：<strong>有无空格、有无换行、有无中文</strong></li><li>确认中间那个点还在</li></ol>
+<p>我后来养成的习惯是：复制完先数一下，前段 32 位、后段 16 位，对不上就重新复制。</p>
+<h3>第三种：`1004` Authentication Token 验证失败</h3>
+<p><strong>这个最阴，因为它会「先成功后失败」。</strong></p>
+<p>我遇到的现象是：</p>
+<pre class="code" data-lang="text"><code>06:08  测试 → 401（旧 Key）
+06:12  换新 Key 测试 → 成功 ✅
+06:13  用新 Key 跑任务 → 前半段成功，后半段 401
+06:14  再测新 Key → 连续 3 次全部 401</code></pre>
+<p><strong>同一个 Key，几分钟前还很正常，突然就废了。</strong></p>
+<p>排查后发现原因：<strong>在同一个项目下新建了 Key。</strong></p>
+<p>平台的设计逻辑是：一个项目维护一个「当前有效」的凭证。你在网页上点了「新建」之后，<strong>之前那个 Key 立即作废</strong>——哪怕它刚创建几分钟。</p>
+<p>更麻烦的是：如果新建之后你没有把新 Key 复制下来，那个新 Key 也拿不到了（只显示一次），结果就是<strong>两边都没了</strong>。</p>
+<p><strong>处理办法</strong>：</p>
+<ol><li>建 Key 之前，<strong>先把列表里不用的全删掉</strong>，只留一个</li><li>建完之后<strong>立刻复制保存</strong>，然后<strong>不要再去碰那个页面</strong></li><li>尤其不要在这个页面点「新建」——除非你确定要替换掉当前的</li></ol>
+<h2>一个能省时间的诊断脚本</h2>
+<p>这三次踩坑最大的教训是：<strong>别用「改配置 → 重启服务 → 看日志」的方式排查</strong>，太慢。</p>
+<p>正确做法是写个最小验证脚本，直接打 API 端点。我用 Python 标准库写的（不需要装任何依赖）：</p>
+<pre class="code" data-lang="python"><code>import json, urllib.request, urllib.error
+
+KEY = "你的key"
+URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+
+payload = {
+    "model": "glm-4-flash",
+    "messages": [{"role": "user", "content": "回复OK"}],
+    "max_tokens": 5,
+}
+req = urllib.request.Request(
+    URL,
+    data=json.dumps(payload).encode(),
+    headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + KEY,
+    },
+    method="POST",
+)
+
+try:
+    with urllib.request.urlopen(req, timeout=40) as r:
+        d = json.loads(r.read().decode())
+    print("OK -&gt;", d["choices"][0]["message"]["content"])
+except urllib.error.HTTPError as e:
+    print("HTTP", e.code)
+    print(e.read().decode("utf-8", errors="ignore")[:200])</code></pre>
+<p><strong>这个脚本有三个好处</strong>：</p>
+<ol><li><strong>秒级出结果</strong>，不用等服务重启</li><li><strong>直接看到原始错误码</strong>，而不是被上层框架包装过的模糊报错</li><li><strong>容易改造成对照测试</strong>——把 Key 拆成前段/后段分别试，立刻就能判断是格式问题还是有效性问题</li></ol>
+<p>我后来加了个连测逻辑，连续调用三次：</p>
+<pre class="code" data-lang="python"><code>ok = 0
+for i in range(3):
+    # ... 调用 ...
+    if 成功: ok += 1
+print("结论:", "稳定可用" if ok == 3 else f"只有 {ok}/3 成功，Key 不稳定")</code></pre>
+<p><strong>为什么连测三次</strong>：因为遇到过「第一次成功、后面全失败」的情况。单次测试会给你虚假的安全感。</p>
+<h2>三条经验</h2>
+<p><strong>第一，把 Key 当作一次性产物。</strong></p>
+<p>不要指望它能长期稳定存在。建完就立刻复制、立刻存好、立刻验证。平台上的 Key 列表只是「凭证管理」，不是「凭证仓库」——<strong>里面的内容你随时可能拿不回来</strong>。</p>
+<p><strong>第二，错误码是你的朋友。</strong></p>
+<p>`401` 是个大类，但细分错误码能精确告诉你问题在哪。花五分钟把错误码和含义对上，比盲目重试一百次有用。</p>
+<p><strong>第三，验证脚本要能手动拆解。</strong></p>
+<p>如果验证脚本只能测「完整 Key 能不能用」，那它只能告诉你「不行」。但如果它能分别测「前段」「后段」「组合」，就能告诉你「为什么不行」。</p>
+<h2>小结</h2>
+<table><thead><tr><th>现象</th><th>别急着做什么</th><th>应该先做什么</th></tr></thead><tbody><tr><td>401</td><td>反复重试</td><td>看错误码</td></tr><tr><td>1000</td><td>检查 Key 拼写</td><td>去平台确认 Key 是否还存在</td></tr><tr><td>1004</td><td>怀疑网络</td><td>确认是否建过新 Key</td></tr></tbody></table>
+<p>这三次踩坑一共花了半小时，但写这个验证脚本只花了五分钟。<strong>下次再遇到同类问题，五分钟定位，不用再折腾半小时。</strong></p>
+<hr>
+<p><em>本文记录的是实际调试过程，错误码和现象均来自真实测试。不同平台的错误码定义可能有差异，但排查思路是通用的。</em></p>
+</div>
+</body>
+</html>
