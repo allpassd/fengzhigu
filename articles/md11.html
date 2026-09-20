@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手工猜了 31 个域名全失败，最后靠工具自带的探测功能救了我</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#faf7f2;color:#2b2620;
+ font:16px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:44px 22px 90px}
+.back{display:inline-block;margin-bottom:26px;color:#c8553d;text-decoration:none;font-size:14px}
+.back:hover{text-decoration:underline}
+h1{font-size:29px;line-height:1.4;margin:0 0 10px;letter-spacing:-.3px}
+h2{font-size:21px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid #e8e0d5}
+h3{font-size:17.5px;margin:30px 0 10px}
+p{margin:15px 0}
+strong{color:#1a1611}
+blockquote{margin:20px 0;padding:13px 20px;border-left:3px solid #d9694f;
+ background:#f6efe6;border-radius:0 7px 7px 0;color:#544a3e}
+pre.code{margin:20px 0;padding:17px 19px;background:#241f1a;color:#e8e0d5;
+ border-radius:9px;overflow-x:auto;font-size:13.5px;line-height:1.65;position:relative}
+pre.code code{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;white-space:pre}
+pre.code::before{content:attr(data-lang);position:absolute;top:7px;right:11px;
+ font-size:11px;color:#6f6357;text-transform:lowercase}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:14.5px}
+th,td{border:1px solid #e2d8ca;padding:9px 12px;text-align:left;vertical-align:top}
+th{background:#f1e9dd;font-weight:600}
+tr:nth-child(even) td{background:#fbf8f4}
+ul,ol{padding-left:25px;margin:15px 0}
+li{margin:7px 0}
+hr{border:0;border-top:1px solid #e8e0d5;margin:34px 0}
+.meta{color:#8b7d6d;font-size:13.5px;margin:0 0 30px}
+@media(max-width:520px){h1{font-size:23px}.wrap{padding:28px 17px 70px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="./">← 全部文章</a>
+<h2>起因</h2>
+<p>我在本地维护了一个自建的电子书阅读服务，书库放在 `E:\books`，支持 EPUB/TXT，能翻页能听书。用了一段时间之后发现一个问题：<strong>书得自己找、自己放进去</strong>，没有一个顺手的下书渠道。</p>
+<p>于是想接一个电子书源的命令行工具，做成「搜书 → 下载 → 自动进书库」的闭环。</p>
+<h2>第一回合：手工猜域名，全军覆没</h2>
+<p>这类站点的域名经常换，我第一反应是「手工试几个」。</p>
+<p>于是写了个脚本，把能想到的域名挨个测 TCP 连通性：</p>
+<pre class="code" data-lang="python"><code>import socket
+
+domains = ["z-lib.org", "zlibrary.to", "1lib.to", ...]  # 一共 31 个
+
+for d in domains:
+    try:
+        s = socket.create_connection((d, 443), timeout=5)
+        print("通", d)
+        s.close()
+    except Exception:
+        print("不通", d)</code></pre>
+<p><strong>结果：31 个域名，全部不通。</strong></p>
+<p>到这里其实就该停下来想想了。但我又试了第二轮——换成测 HTTP 层：</p>
+<pre class="code" data-lang="python"><code>import urllib.request
+
+for d in domains:
+    try:
+        r = urllib.request.urlopen("https://" + d, timeout=8)
+        print(r.status, d)
+    except Exception as e:
+        print("ERR", d, e)</code></pre>
+<p>结果依然是<strong>全军覆没</strong>，要么连接超时，要么直接报 DNS 解析失败。</p>
+<p><strong>这时候我意识到问题所在了</strong>：我在用「我以为存在的域名」去试探，但这些域名可能早就废弃了。<strong>与其继续猜，不如找一个维护着最新域名列表的工具。</strong></p>
+<h2>第二回合：装工具，让它自己报可用域名</h2>
+<p>找到了一个用 Go 写的命令行客户端（开源项目，支持搜索、下载、历史、配额查询）。下载二进制、跑起来。</p>
+<p>它有个 `doctor` 子命令，功能是<strong>探测当前可用的镜像域名</strong>：</p>
+<pre class="code" data-lang="bash"><code>zlib.exe doctor --eapi</code></pre>
+<p><strong>跑完输出让我有点意外</strong>：</p>
+<pre class="code" data-lang="text"><code>zlib.bz      → healthy
+zliba.ru     → challenged</code></pre>
+<p><strong>两个可用的域名，都不在我手工猜的那 31 个里面。</strong></p>
+<p>这就是典型的「信息差」问题：</p>
+<ul><li>我在用<strong>记忆里的域名</strong>试探</li><li>工具在维护<strong>实际在用的域名列表</strong></li></ul>
+<p>工具的列表更新更快、更准。手工猜的命中率基本为零。</p>
+<h2>关于「challenged」状态</h2>
+<p>输出的 `challenged` 这个状态值得一提。</p>
+<p>它的含义是：<strong>域名是活的，但返回了一个浏览器挑战页（HTTP 503）。</strong> 这是反爬机制——服务器先给你一个需要执行 JS 才能通过的页面，通过之后才放行真正的请求。</p>
+<pre class="code" data-lang="text"><code>zlib.bz     → healthy        直接可用
+zliba.ru    → challenged     需要过挑战页，工具会自动处理</code></pre>
+<p><strong>这里有个重要的判断标准：能用不能用，要看 HTTP 层，不能只看 TCP。</strong></p>
+<p>我第一轮测 TCP 的结果里，有几个域名 TCP 是通的，但实际返回的是挑战页或者错误页。<strong>如果只看「端口通不通」，会得出完全错误的结论。</strong></p>
+<h2>第三回合：验证全链路</h2>
+<p>域名通了，接下来验证完整流程。</p>
+<p><strong>登录</strong>：</p>
+<pre class="code" data-lang="bash"><code>zlib.exe login --eapi</code></pre>
+<p>成功。凭证会缓存在本地配置目录，之后不用重复登录。</p>
+<p><strong>搜索测试</strong>（用「三体」）：</p>
+<pre class="code" data-lang="bash"><code>zlib.exe search "三体"</code></pre>
+<p>返回 50 条结果，中文书完整，格式、大小、评分都有。<strong>这一步验证了网络、认证、解析三层都正常。</strong></p>
+<p><strong>下载测试</strong>：</p>
+<pre class="code" data-lang="bash"><code>zlib.exe download "26610712:def1ec" -d "E:\books"</code></pre>
+<p>下载下来 2,600,699 字节。<strong>校验一下完整性</strong>——EPUB 本质是 zip，用 zipfile 打开看看能不能正常解析：</p>
+<pre class="code" data-lang="python"><code>import zipfile
+z = zipfile.ZipFile(r"E:\books\三体.epub")
+print(len(z.namelist()), "个文件")   # 110 个文件</code></pre>
+<p>110 个文件，元数据正常，书名作者都对。<strong>链路完全可用。</strong></p>
+<h2>踩到的几个小坑</h2>
+<h3>坑一：参数名不是想当然的那个</h3>
+<pre class="code" data-lang="bash"><code>zlib.exe download "xxx" -o "E:\books"    # ❌ 报错 unknown shorthand flag: 'o'
+zlib.exe download "xxx" -d "E:\books"    # ✅ 正确</code></pre>
+<p>指定下载目录用 `-d`（directory），不是 `-o`（output）。</p>
+<h3>坑二：查配额的命令名</h3>
+<pre class="code" data-lang="bash"><code>zlib.exe quota      # ❌ unknown command "quota"
+zlib.exe profile    # ✅ 正确</code></pre>
+<p>没有 `quota` 这个命令，配额查询在 `profile` 里。</p>
+<h3>坑三：Windows 批处理文件不能有中文</h3>
+<p>这个坑踩得最狠。</p>
+<p>我一开始写了个桌面快捷脚本，文件名叫 `下书.bat`，内容是：</p>
+<pre class="code" data-lang="bat"><code>@echo off
+set BOOKS_DIR=E:\books
+echo 下载目录：%BOOKS_DIR%
+zlib.exe search %*</code></pre>
+<p><strong>在 GBK 环境下，这个文件被完全解读错了。</strong> 报错长这样：</p>
+<pre class="code" data-lang="text"><code>'ず渚嬶細涓嬩笅鍔?bat' 不是内部或外部命令
+'BOOKS_DIR' 不是内部或外部命令</code></pre>
+<p>文件名和内容里的中文全部变成乱码，把命令结构冲散了。</p>
+<p><strong>原因</strong>：Windows 批处理文件按系统本地编码（中文系统是 GBK）读取，如果文件内容里混了中文，读写编码不一致就会乱码。</p>
+<p><strong>解决办法</strong>：批处理文件<strong>全部用纯 ASCII</strong>——文件名用英文，内容也用英文，中文只作为<strong>参数</strong>传入：</p>
+<pre class="code" data-lang="bat"><code>@echo off
+set BOOKS_DIR=E:\books
+zlib.exe search %*</code></pre>
+<p>调用时中文作为参数：</p>
+<pre class="code" data-lang="bash"><code>book.bat "三体"</code></pre>
+<p>这样中文走的是命令行参数，不经过文件编码，就没问题了。</p>
+<h2>最终成果</h2>
+<table><thead><tr><th>环节</th><th>状态</th></tr></thead><tbody><tr><td>域名探测</td><td>✅ `doctor` 命令自动搞定</td></tr><tr><td>登录</td><td>✅ 凭证本地缓存</td></tr><tr><td>搜索</td><td>✅ 50 条结果，中文完整</td></tr><tr><td>下载</td><td>✅ 2.6 MB，zip 校验 110 文件</td></tr><tr><td>配额</td><td>✅ 每日 10 本</td></tr><tr><td>入库</td><td>✅ 直接落到书库目录</td></tr></tbody></table>
+<p><strong>闭环成立</strong>：搜书 → 下载 → 入库 → 阅读，全程打通。</p>
+<h2>三条经验</h2>
+<p><strong>第一，别用记忆猜服务地址。</strong></p>
+<p>这类站点的域名变动频繁，靠印象去试基本是浪费时间。<strong>找一个维护着列表的工具，让它自己探测。</strong></p>
+<p><strong>第二，TCP 通不等于能用。</strong></p>
+<p>第一轮我测 TCP 的时候，有几个域名端口是通的，但 HTTP 层返回的是挑战页。<strong>要判断「能不能用」，必须走到 HTTP 层看实际响应。</strong></p>
+<p><strong>第三，Windows 下的批处理要谨慎对待中文。</strong></p>
+<p>这个坑不在于「会不会乱码」，而在于<strong>乱码之后的表现极具迷惑性</strong>——命令被拆碎了报一堆看不懂的错，很容易以为是别的问题。<strong>规则很简单：批处理文件保持纯 ASCII。</strong></p>
+<hr>
+<p><em>本文记录的是实际调试过程，所有命令行输出和错误信息都来自真实测试。</em></p>
+</div>
+</body>
+</html>
