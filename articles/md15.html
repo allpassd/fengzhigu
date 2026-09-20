@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy 实战 · 用 Python 标准库写一个能用的 HTTP 服务：零依赖、支持并发</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#faf7f2;color:#2b2620;
+ font:16px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:44px 22px 90px}
+.back{display:inline-block;margin-bottom:26px;color:#c8553d;text-decoration:none;font-size:14px}
+.back:hover{text-decoration:underline}
+h1{font-size:29px;line-height:1.4;margin:0 0 10px;letter-spacing:-.3px}
+h2{font-size:21px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid #e8e0d5}
+h3{font-size:17.5px;margin:30px 0 10px}
+p{margin:15px 0}
+strong{color:#1a1611}
+blockquote{margin:20px 0;padding:13px 20px;border-left:3px solid #d9694f;
+ background:#f6efe6;border-radius:0 7px 7px 0;color:#544a3e}
+pre.code{margin:20px 0;padding:17px 19px;background:#241f1a;color:#e8e0d5;
+ border-radius:9px;overflow-x:auto;font-size:13.5px;line-height:1.65;position:relative}
+pre.code code{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;white-space:pre}
+pre.code::before{content:attr(data-lang);position:absolute;top:7px;right:11px;
+ font-size:11px;color:#6f6357;text-transform:lowercase}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:14.5px}
+th,td{border:1px solid #e2d8ca;padding:9px 12px;text-align:left;vertical-align:top}
+th{background:#f1e9dd;font-weight:600}
+tr:nth-child(even) td{background:#fbf8f4}
+ul,ol{padding-left:25px;margin:15px 0}
+li{margin:7px 0}
+hr{border:0;border-top:1px solid #e8e0d5;margin:34px 0}
+.meta{color:#8b7d6d;font-size:13.5px;margin:0 0 30px}
+@media(max-width:520px){h1{font-size:23px}.wrap{padding:28px 17px 70px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="./">← 全部文章</a>
+<blockquote>起一个本地 HTTP 服务，第一反应通常是装 Flask。但用 WorkBuddy 折腾下来发现，只需求几个接口的话，Python 标准库就够了，一个依赖都不用装。</blockquote>
+<blockquote>本文属于 <strong>WorkBuddy 实战笔记</strong>系列。</blockquote>
+<h2>为什么要用标准库</h2>
+<p>`pip install flask` 只要一行，为什么要费劲用标准库？</p>
+<p><strong>几个真实场景：</strong></p>
+<ol><li><strong>目标机器上不一定能装包</strong> —— 离线环境、受限网络、或者不想在系统里留痕迹</li><li><strong>依赖越少越稳</strong> —— 几十行代码的小服务，不需要一个框架</li><li><strong>启动快、包体积小</strong> —— 不用等依赖解析</li></ol>
+<p><strong>Python 的 `http.server` 一直被当成「只能做 demo」的玩具，但实际上加几行就能做到：并发处理、JSON 接口、流式返回文件。</strong> 这篇文章记录我实际怎么做。</p>
+<h2>最小可运行版本</h2>
+<pre class="code" data-lang="python"><code>import http.server, json
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/api/ping":
+            body = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+if __name__ == "__main__":
+    http.server.HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()</code></pre>
+<p><strong>五行核心逻辑就够了。</strong> 但直接拿去用会踩几个坑。</p>
+<h2>坑一：单线程，一个慢请求阻塞全部</h2>
+<p>`HTTPServer` 是<strong>单线程</strong>的。如果一个请求要处理 30 秒，<strong>第二个请求必须排队等</strong>。</p>
+<p><strong>这在浏览器里表现得很明显</strong>：页面上的多个请求会串行执行，看起来像卡死。</p>
+<p><strong>解决办法：换成多线程版本。</strong></p>
+<pre class="code" data-lang="python"><code>import socketserver
+
+class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True        # 主线程退出时，子线程跟着结束
+    allow_reuse_address = False  # 见下面「坑二」
+
+http.server.HTTPServer = ThreadingServer   # 或者直接用 ThreadingServer 实例化</code></pre>
+<p>`ThreadingMixIn` 让每个请求在独立线程里处理。<strong>加上 `daemon_threads = True`</strong>，主进程退出时不会因为还有活跃线程而挂住。</p>
+<h2>坑二：端口被「幽灵占用」</h2>
+<p>调试时经常遇到这个：</p>
+<pre class="code" data-lang="text"><code>OSError: [WinError 10048] 通常每个套接字地址只允许使用一次</code></pre>
+<p>原因通常是：</p>
+<ol><li>上一个进程还在跑</li><li>或者处于 `TIME_WAIT` 状态（连接已关闭但端口还没释放）</li></ol>
+<p><strong>标准做法是设 `allow_reuse_address = True`</strong>（`SO_REUSEADDR`），让系统允许复用这个端口。</p>
+<p><strong>但这里有个权衡。</strong> 在某些平台上，`SO_REUSEADDR` 允许<strong>两个进程绑定同一个端口</strong>，导致请求被随机分发到不同进程——排查起来极其痛苦。</p>
+<p><strong>我的选择是显式设为 `False`：</strong></p>
+<pre class="code" data-lang="python"><code>class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = False   # 宁可报错，也不要「幽灵双绑」</code></pre>
+<p><strong>宁可启动时明确报错，也不要默默跑着两个实例。</strong> 报错了你至少知道要先停掉旧的。</p>
+<h2>坑三：`log_message` 在无控制台环境下崩溃</h2>
+<p><strong>这是最隐蔽的一个，我卡了很久。</strong></p>
+<p>服务在测试时跑得好好的，<strong>一旦改成后台无声启动（pythonw / 无控制台），就变成「每个请求必崩」</strong>。</p>
+<p><strong>原因在这里：</strong></p>
+<pre class="code" data-lang="python"><code>class BaseHTTPRequestHandler:
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s - - [%s] %s\n" % (...))   # ← 这里</code></pre>
+<p>标准库的实现会往 `sys.stderr` 写日志。<strong>但在 pythonw 或无控制台环境下，`sys.stdout` 和 `sys.stderr` 都是 `None`。</strong></p>
+<p>于是：`None.write(...)` → `AttributeError` → <strong>每个请求都在日志阶段抛异常</strong>，客户端看到的是连接被无响应关闭。</p>
+<h3>解决办法一：重写 `log_message`</h3>
+<pre class="code" data-lang="python"><code>def log_message(self, fmt, *args):
+    try:
+        sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
+    except Exception:
+        pass       # 日志失败绝不能影响业务</code></pre>
+<p><strong>关键点是 `try/except`</strong> —— 日志是附属功能，<strong>绝不能让它影响主流程</strong>。</p>
+<h3>解决办法二：启动时兜底流</h3>
+<pre class="code" data-lang="python"><code>if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")</code></pre>
+<p><strong>两个一起用最稳。</strong> 兜底流处理「没控制台」的情况，`try/except` 处理「流存在但写入失败」的情况。</p>
+<h3>还有一个相关的坑：编码</h3>
+<p><strong>如果输出被重定向到管道或文件，`sys.stderr` 的编码可能是系统本地编码（中文系统是 GBK）。</strong> 这时日志里如果有 emoji 或者特殊字符，会抛 `UnicodeEncodeError`。</p>
+<pre class="code" data-lang="python"><code>try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass</code></pre>
+<p><strong>统一改成 UTF-8 并加 `errors="replace"`</strong>，保证任何字符都不会导致写入失败。</p>
+<h2>关键点一：文件流式返回</h2>
+<p><strong>不要把整个文件读进内存再发。</strong> 大文件会吃满内存。</p>
+<pre class="code" data-lang="python"><code>def _send_file_stream(self, path, mime):
+    size = path.stat().st_size
+    self.send_response(200)
+    self.send_header("Content-Type", mime)
+    self.send_header("Content-Length", str(size))    # 必须带，否则浏览器不知道进度
+    self.end_headers()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(65536)                    # 64 KB 一块
+            if not chunk:
+                break
+            self.wfile.write(chunk)</code></pre>
+<p><strong>`Content-Length` 一定要带</strong>，否则浏览器无法显示下载进度，也可能不显示「另存为」。</p>
+<h2>关键点二：路径安全（很重要）</h2>
+<p><strong>如果服务要读文件，必须防路径穿越。</strong></p>
+<p>用户请求 `/files/../../etc/passwd` 这种，如果不处理，就可能读到不该读的文件。</p>
+<p><strong>我的做法是用白名单，而不是拼接路径：</strong></p>
+<pre class="code" data-lang="python"><code>def do_GET(self):
+    path = unquote(urlparse(self.path).path)
+
+    if path in ("/", "/index.html"):
+        return self.serve_file("index.html")      # 只从固定目录取指定文件
+    if path.startswith("/api/cover/"):
+        return self.api_cover(path.rsplit("/", 1)[-1].split("?")[0])   # 只取文件名部分
+    return self._json({"error": "not found"}, 404)</code></pre>
+<p><strong>两个要点：</strong></p>
+<ol><li><strong>用白名单匹配，不用「拼接用户输入到根目录」</strong></li><li><strong>取路径最后一段作为文件名</strong>，天然过滤掉 `../`</li></ol>
+<p><strong>这个设计还有个副作用</strong>（后面提到的踩坑）：因为太严格，我自己丢进去的临时文件也会被 404。</p>
+<h2>关键点三：JSON 响应的统一封装</h2>
+<p>每个接口都手写 header 太啰嗦，封装一下：</p>
+<pre class="code" data-lang="python"><code>def _json(self, obj, status=200):
+    body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    self._send_bytes(status, "application/json; charset=utf-8", body)
+
+def _send_bytes(self, status, ctype, data):
+    self.send_response(status)
+    self.send_header("Content-Type", ctype)
+    self.send_header("Content-Length", str(len(data)))
+    self.send_header("Cache-Control", "no-store")          # 接口不缓存
+    self.send_header("Access-Control-Allow-Origin", "*")   # 需要跨域时加
+    self.end_headers()
+    try:
+        self.wfile.write(data)
+    except Exception:
+        pass         # 客户端提前断开时不报错</code></pre>
+<p><strong>`ensure_ascii=False`</strong> 很关键——不然中文会变成 `\u4e2d\u6587` 这种转义序列，虽然合法但可读性差。</p>
+<p><strong>`wfile.write` 包 `try/except`</strong>：客户端可能中途关闭连接（比如用户刷新页面），这时写入会抛异常。<strong>这不是服务的问题，不该让它污染日志。</strong></p>
+<h2>启动横幅：把访问地址打出来</h2>
+<p>服务跑起来之后，用户最需要知道的是「从哪访问」。启动时打印清楚：</p>
+<pre class="code" data-lang="python"><code>lan = get_lan_ip()
+print("=" * 56)
+print("  服务已启动")
+print("=" * 56)
+print(f"  本机    : http://127.0.0.1:{PORT}/")
+print(f"  局域网  : http://{lan}:{PORT}/")
+print("=" * 56)
+print("  按 Ctrl+C 停止")</code></pre>
+<p><strong>取值方式用 UDP 探测，不要解析 `ipconfig`：</strong></p>
+<pre class="code" data-lang="python"><code>def get_lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))    # 不发包，只让系统选路由
+        return s.getsockname()[0]
+    finally:
+        s.close()</code></pre>
+<p><strong>为什么不用 `ipconfig`</strong>：输出是本地编码（中文系统 GBK），解析要处理编码问题；而且多网卡时输出很复杂。<strong>UDP 探测一行搞定，还更准。</strong></p>
+<h2>完整骨架</h2>
+<p>把上面这些拼起来：</p>
+<pre class="code" data-lang="python"><code>import http.server, socketserver, json, socket, os, sys
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+ROOT = Path(__file__).parent
+PORT = 8099
+
+class Handler(http.server.BaseHTTPRequestHandler):
+
+    def log_message(self, fmt, *args):
+        try:
+            sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
+        except Exception:
+            pass
+
+    def _json(self, obj, status=200):
+        self._send_bytes(status, "application/json; charset=utf-8",
+                         json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+    def _send_bytes(self, status, ctype, data):
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except Exception:
+            pass
+
+    def do_GET(self):
+        path = unquote(urlparse(self.path).path)
+        if path in ("/", "/index.html"):
+            return self.serve_file("index.html")
+        if path == "/api/info":
+            return self._json({"port": PORT, "lan": get_lan_ip()})
+        return self._json({"error": "not found"}, 404)
+
+    def serve_file(self, name):
+        f = ROOT / name
+        if not f.exists():
+            return self._send_bytes(404, "text/plain; charset=utf-8", b"not found")
+        self._send_bytes(200, "text/html; charset=utf-8", f.read_bytes())
+
+
+class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = False
+
+
+def get_lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+
+def serve():
+    os.chdir(ROOT)
+    # 无控制台环境兜底
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    lan = get_lan_ip()
+    print(f"  本机   : http://127.0.0.1:{PORT}/")
+    print(f"  局域网 : http://{lan}:{PORT}/")
+
+    Server(("0.0.0.0", PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    serve()</code></pre>
+<p><strong>这就是一个能实际用的骨架</strong>：支持并发、无控制台可用、路径安全、JSON 接口、文件服务。</p>
+<h2>三条经验</h2>
+<p><strong>第一，日志失败绝不能影响业务。</strong></p>
+<p>`log_message` 里那个 `try/except` 是最重要的一行。<strong>在无控制台环境下，它决定了服务是「正常跑」还是「每个请求必崩」。</strong></p>
+<p><strong>第二，`allow_reuse_address` 要慎重。</strong></p>
+<p>默认的 `True` 在某些平台上允许端口被两个进程同时绑定，问题极难排查。<strong>宁可启动时报错，也不要默默跑着两个实例。</strong></p>
+<p><strong>第三，路径处理用白名单，不要拼接。</strong></p>
+<p>「把用户输入拼到根目录」是最常见的路径穿越漏洞来源。<strong>用白名单匹配已知路径，取文件名时只用最后一段。</strong></p>
+<hr>
+<p><em>本文记录的是实际开发过程，所有代码都在真实服务中使用。</em></p>
+</div>
+</body>
+</html>
