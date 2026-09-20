@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy 排错记 · Windows 批处理的中文编码坑：命令被拆碎，报一堆看不懂的错</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#faf7f2;color:#2b2620;
+ font:16px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:44px 22px 90px}
+.back{display:inline-block;margin-bottom:26px;color:#c8553d;text-decoration:none;font-size:14px}
+.back:hover{text-decoration:underline}
+h1{font-size:29px;line-height:1.4;margin:0 0 10px;letter-spacing:-.3px}
+h2{font-size:21px;margin:44px 0 14px;padding-bottom:9px;border-bottom:1px solid #e8e0d5}
+h3{font-size:17.5px;margin:30px 0 10px}
+p{margin:15px 0}
+strong{color:#1a1611}
+blockquote{margin:20px 0;padding:13px 20px;border-left:3px solid #d9694f;
+ background:#f6efe6;border-radius:0 7px 7px 0;color:#544a3e}
+pre.code{margin:20px 0;padding:17px 19px;background:#241f1a;color:#e8e0d5;
+ border-radius:9px;overflow-x:auto;font-size:13.5px;line-height:1.65;position:relative}
+pre.code code{font-family:ui-monospace,SFMono-Regular,Consolas,"Courier New",monospace;white-space:pre}
+pre.code::before{content:attr(data-lang);position:absolute;top:7px;right:11px;
+ font-size:11px;color:#6f6357;text-transform:lowercase}
+table{width:100%;border-collapse:collapse;margin:22px 0;font-size:14.5px}
+th,td{border:1px solid #e2d8ca;padding:9px 12px;text-align:left;vertical-align:top}
+th{background:#f1e9dd;font-weight:600}
+tr:nth-child(even) td{background:#fbf8f4}
+ul,ol{padding-left:25px;margin:15px 0}
+li{margin:7px 0}
+hr{border:0;border-top:1px solid #e8e0d5;margin:34px 0}
+.meta{color:#8b7d6d;font-size:13.5px;margin:0 0 30px}
+@media(max-width:520px){h1{font-size:23px}.wrap{padding:28px 17px 70px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="./">← 全部文章</a>
+<blockquote>双击一个批处理脚本，输出了一堆完全看不懂的报错。用 WorkBuddy 排查后发现，根因竟然和命令本身毫无关系——是编码问题。</blockquote>
+<blockquote>本文属于 <strong>WorkBuddy 实战笔记</strong>系列。</blockquote>
+<h2>一句话结论</h2>
+<p><strong>Windows 批处理文件（.bat / .cmd）不要用中文文件名，也不要在内容里写中文。</strong> 中文只应该作为<strong>命令行参数</strong>传入。</p>
+<p>这个坑的可怕之处不在于「会不会乱码」，而在于<strong>乱码之后的表现极具迷惑性</strong>——报的错跟真实原因完全对不上，很容易往错误的方向排查。</p>
+<h2>事故现场</h2>
+<p>我写了个桌面快捷脚本，用来调用一个命令行工具。文件名叫 `工具.bat`，内容是：</p>
+<pre class="code" data-lang="bat"><code>@echo off
+set DATA_DIR=E:\data
+echo target dir: %DATA_DIR%
+tool.exe search %*</code></pre>
+<p>双击运行，输出是这样：</p>
+<pre class="code" data-lang="text"><code>'ず渚嬶細涓嬩笅鍔?bat' 不是内部或外部命令，也不是可运行的程序或批处理文件。
+'DATA_DIR' 不是内部或外部命令，也不是可运行的程序或批处理文件。
+'tool.exe' 不是内部或外部命令，也不是可运行的程序或批处理文件。
+'echo' 不是内部或外部命令，也不是可运行的程序或批处理文件。</code></pre>
+<p><strong>几个诡异的地方：</strong></p>
+<ol><li>第一行报的是<strong>文件名本身</strong>（`ず渚嬶細涓嬩笅鍔?bat`）——但文件名明明是 `工具.bat`</li><li>后面报的 `DATA_DIR`、`tool.exe`、`echo` —— <strong>这些是脚本里的内容，不是命令</strong></li><li>整条命令被<strong>拆碎了</strong>，每一段都被当成独立命令去执行</li></ol>
+<p>看起来像脚本被「打碎」了，但打开文件看，内容完全正常。</p>
+<h2>原因</h2>
+<p><strong>根源是编码不一致。</strong></p>
+<table><thead><tr><th>环节</th><th>编码</th></tr></thead><tbody><tr><td>我写文件时</td><td>UTF-8</td></tr><tr><td>Windows 命令行读取批处理时</td><td><strong>系统本地编码</strong>（中文系统是 GBK / CP936）</td></tr></tbody></table>
+<p>GBK 用 <strong>2 个字节</strong>表示一个汉字，UTF-8 用 <strong>3 个字节</strong>。同一个文件，按 GBK 去解读 UTF-8 的字节流，就会得到完全错误的字符。</p>
+<p><strong>关键点</strong>：批处理文件的解析是<strong>逐字节</strong>的，编码一错，不只是文字显示乱码，<strong>连命令的语法结构都会被破坏</strong>。</p>
+<p>举个例子：UTF-8 的「下载」是 6 个字节，按 GBK 解读会变成 3 个毫无意义的汉字。如果这段内容恰好出现在命令中间，整个命令就被「插入」了垃圾字符，解析器看到的就是一个畸形的命令。</p>
+<p><strong>另一个加剧因素</strong>：文件名也一样。UTF-8 命名的 `工具.bat`，在 GBK 环境下被读成 `ず渚嬶細涓嬩笅鍔?bat` —— 这就是报错第一行的来源。</p>
+<h2>为什么这个坑特别难查</h2>
+<p><strong>因为报错信息会把人带偏。</strong></p>
+<p>看到 `'echo' 不是内部或外部命令`，第一反应是：</p>
+<ul><li>是不是 `echo` 写错了？→ 没有</li><li>是不是环境变量 PATH 有问题？→ 不是</li><li>是不是文件编码格式不对？→ <strong>接近了，但方向是「要不要加 BOM」</strong></li></ul>
+<p>看到 `'DATA_DIR' 不是内部或外部命令`，又可能想：</p>
+<ul><li>是不是 `set` 语法错了？→ 没有</li><li>是不是变量展开有问题？→ 不是</li></ul>
+<p><strong>真实原因是「整个文件的字节流被错误解读」，但报错信息指向的是「某个命令不存在」。</strong> 完全对不上。</p>
+<h2>解决办法</h2>
+<h3>方案一：全 ASCII（推荐）</h3>
+<p><strong>文件名和内容全部用纯 ASCII：</strong></p>
+<p>文件改名 `tool.bat`，内容改成：</p>
+<pre class="code" data-lang="bat"><code>@echo off
+set DATA_DIR=E:\data
+tool.exe search %*</code></pre>
+<p><strong>中文怎么办？</strong> 作为<strong>参数</strong>传入，不经过文件编码：</p>
+<pre class="code" data-lang="bash"><code>tool.bat "report"</code></pre>
+<p>命令行参数在传递时会走系统 API 转换，不受文件编码影响。</p>
+<p><strong>这是最稳的方案。</strong> 文件内容永远是纯 ASCII，无论系统是什么编码都不会出问题。</p>
+<h3>方案二：把编码改成 GBK 保存</h3>
+<p>如果一定要在文件里写中文，<strong>保存时选择「ANSI」或「GBK」编码</strong>（Windows 记事本的「ANSI」就是系统本地编码）。</p>
+<p><strong>在 VS Code 里</strong>：右下角点击编码 → 「通过编码保存」→ 选 `GB2312` 或 `GBK`。</p>
+<p><strong>但这个方案有隐患</strong>：换一台不同区域设置的机器就又会出问题（比如英文系统用的是 CP1252）。<strong>跨机器分发时不可靠。</strong></p>
+<h3>方案三：加 chcp 声明（不推荐）</h3>
+<pre class="code" data-lang="bat"><code>@echo off
+chcp 65001 &gt;nul</code></pre>
+<p>`chcp 65001` 把控制台切到 UTF-8。<strong>但这只在「控制台输出」层面生效，不改变批处理文件的解析方式。</strong> 实测下来对文件内的中文乱码问题<strong>没有帮助</strong>，反而可能引入新的显示问题。</p>
+<h2>验证方法</h2>
+<p>想快速确认是不是编码问题，用十六进制看文件头几个字节：</p>
+<pre class="code" data-lang="bash"><code>hexdump -C tool.bat | head -3</code></pre>
+<ul><li>UTF-8 的中文：「下」是 `E4 B8 8B`</li><li>GBK 的中文：「下」是 `CF C2`</li></ul>
+<p><strong>如果文件里出现 `E4 B8 8B` 这种三字节序列，而系统是 GBK 环境，问题就坐实了。</strong></p>
+<h2>顺带一提：PowerShell 脚本也一样</h2>
+<p>这个问题不只出现在 `.bat`，`.ps1` 也一样。<strong>PowerShell 脚本更麻烦</strong>，因为不同版本的默认编码还不一样：</p>
+<ul><li>Windows PowerShell 5.1：默认 ANSI</li><li>PowerShell 7+：默认 UTF-8</li></ul>
+<p><strong>同一个 `.ps1` 文件，在两个版本下行为可能不同。</strong></p>
+<p><strong>统一建议</strong>：脚本文件尽量保持纯 ASCII；必须写中文时，明确保存为<strong>带 BOM 的 UTF-8</strong>（BOM 能让解析器正确识别编码）。</p>
+<h2>三条经验</h2>
+<p><strong>第一，脚本文件保持纯 ASCII。</strong></p>
+<p>这条规则简单粗暴但极其有效。文件名用英文、内容用英文，中文全部走参数或配置文件。<strong>这样无论部署到哪台机器都不会出问题。</strong></p>
+<p><strong>第二，报错信息可能指向错误的方向。</strong></p>
+<p>`'echo' 不是内部或外部命令` 这种错，看起来像命令缺失，实际是编码问题。<strong>遇到「一堆基础命令都报不存在」的情况，第一反应应该是编码问题，而不是环境问题。</strong></p>
+<p><strong>第三，跨机器分发的脚本，一律用 ASCII。</strong></p>
+<p>「我这边能跑」不代表「别人那边能跑」。区域设置、系统版本、PowerShell 版本都可能是变量。<strong>ASCII 是唯一没有歧义的选择。</strong></p>
+<hr>
+<p><em>本文记录的是实际调试过程，所有错误信息来自真实测试。</em></p>
+</div>
+</body>
+</html>
