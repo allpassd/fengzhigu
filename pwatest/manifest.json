@@ -1,0 +1,12 @@
+{
+  "name": "晨会 · 真机验证",
+  "short_name": "晨会验证",
+  "description": "只做一件事：验证这台手机能不能自己弹通知",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#111827",
+  "lang": "zh-CN"
+}

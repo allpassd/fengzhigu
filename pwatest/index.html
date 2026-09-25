@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>晨会 · 真机验证</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="晨会验证">
+<meta name="theme-color" content="#111827">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 20px 16px 48px;
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f6f7f9; color: #111827;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .5px; }
+  .sub { color: #6b7280; font-size: 13px; margin: 0 0 18px; }
+  .card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+    padding: 14px 14px 4px; margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: 13px; font-weight: 600; color: #6b7280;
+    margin: 0 0 10px; letter-spacing: 1px;
+  }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid #f3f4f6; font-size: 14px; }
+  .row:first-of-type { border-top: 0; }
+  .k { color: #6b7280; flex: 0 0 auto; }
+  .v { text-align: right; font-weight: 600; word-break: break-all; }
+  .v.bad { color: #b91c1c; }
+  .v.good { color: #047857; }
+  .v.warn { color: #b45309; }
+  button {
+    display: block; width: 100%; margin: 0 0 10px; padding: 15px 16px;
+    font: 600 16px/1 -apple-system, "PingFang SC", sans-serif;
+    border: 1px solid #d1d5db; border-radius: 12px; background: #fff; color: #111827;
+  }
+  button:active { background: #f3f4f6; }
+  button.primary { background: #111827; color: #fff; border-color: #111827; }
+  button.primary:active { background: #374151; }
+  button.done { background: #047857; color: #fff; border-color: #047857; }
+  button small { display: block; font-weight: 400; font-size: 12px; opacity: .7; margin-top: 4px; }
+  pre {
+    background: #111827; color: #e5e7eb; border-radius: 12px; padding: 14px;
+    font: 11.5px/1.55 ui-monospace, Menlo, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all; margin: 0;
+  }
+  .tip { font-size: 12.5px; color: #6b7280; margin: 0 0 14px; }
+  .tip b { color: #111827; }
+</style>
+</head>
+<body>
+
+<h1>晨会 · 真机验证</h1>
+<p class="sub">这一页只做一件事：把「这台手机到底能不能自己弹通知」问清楚。结果复制发回给阿布就行。</p>
+
+<div class="card" id="envCard">
+  <h2>这台手机是什么</h2>
+  <div id="env"><div class="row"><span class="k">状态</span><span class="v">点下面①开始检测</span></div></div>
+</div>
+
+<p class="tip">
+  <b>装到主屏再测，结果才算数。</b>步骤：用 <b>Safari</b> 打开本页 → 点底部<b>分享</b>按钮 → 滑到<b>「添加到主屏幕」</b> → 从桌面图标重新打开本页。
+  （安卓：用 Chrome 打开 → 菜单 → 「添加到主屏幕 / 安装应用」）
+</p>
+
+<button id="btnAll" class="primary">① 开始检测<small>环境 · 存储配额 · 推送能力</small></button>
+<button id="btnPersist">② 申请持久化存储<small>看系统给不给「数据保证不被清」</small></button>
+<button id="btnSub">③ 订阅通知<small>拿到订阅地址 = 我们能主动推到这台手机</small></button>
+<button id="btnCopy">📋 复制全部结果</button>
+
+<div class="card">
+  <h2>原始结果</h2>
+  <pre id="out">点①开始……</pre>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // 阿布的 VAPID 公钥（公开信息，不是密钥）
+  var VAPID_PUB = 'BCI9EV1R-mPyOR0ViFr_S5Xszzq0M5E7Uyyf9h5f9cq9bA38Dmxvy1MruT7RjMl_osW0DVt1H1NuCa-MPLDSC_s';
+
+  var S = {  // 全部检测结果
+    ua: navigator.userAgent,
+    secure: window.isSecureContext ? 'yes' : 'NO',
+    standalone: '?',
+    display: '?',
+    ios: '-',
+    android: '-',
+    sw: 'PushManager' in window ? 'PushManager 有' : 'PushManager 无',
+    swReg: '-',
+    perm: (typeof Notification !== 'undefined') ? Notification.permission : '无 Notification API',
+    quota: '-',
+    usage: '-',
+    persisted: '-',
+    persistGranted: '-',
+    mark: '-',
+    sub: '-',
+    err: []
+  };
+
+  var out = document.getElementById('out');
+  var env = document.getElementById('env');
+
+  function human(b) {
+    if (b === undefined || b === null || isNaN(b)) return '-';
+    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+    if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+    return b + ' B';
+  }
+
+  function render() {
+    var rows = [
+      ['安全上下文 HTTPS', S.secure, S.secure === 'yes' ? 'good' : 'bad'],
+      ['主屏独立模式', S.standalone, S.standalone === 'yes' ? 'good' : 'warn'],
+      ['iOS 版本', S.ios, '-'],
+      ['安卓版本', S.android, '-'],
+      ['Service Worker', S.swReg, S.swReg.indexOf('已注册') === 0 ? 'good' : 'warn'],
+      ['推送能力', S.sw, S.sw === 'PushManager 有' ? 'good' : 'bad'],
+      ['通知权限', S.perm, S.perm === 'granted' ? 'good' : (S.perm === 'denied' ? 'bad' : 'warn')],
+      ['可存上限', S.quota + '（已用 ' + S.usage + '）', '-'],
+      ['持久化存储', S.persisted + (S.persistGranted !== '-' ? ' → 申请后 ' + S.persistGranted : ''), S.persisted === 'granted' ? 'good' : 'warn'],
+      ['标记（跨天用）', S.mark, '-'],
+      ['推送订阅', S.sub, S.sub.indexOf('https://') === 0 ? 'good' : (S.sub === '-' ? '-' : 'bad')]
+    ];
+    env.innerHTML = rows.map(function (r) {
+      return '<div class="row"><span class="k">' + r[0] + '</span><span class="v ' + r[2] + '">' + String(r[1]).replace(/</g, '&lt;') + '</span></div>';
+    }).join('');
+    out.textContent = dump();
+  }
+
+  function dump() {
+    var L = [];
+    L.push('=== 晨会 真机验证 ===');
+    L.push('时间: ' + new Date().toString());
+    L.push('UA: ' + S.ua);
+    L.push('安全上下文: ' + S.secure);
+    L.push('主屏独立模式(standalone): ' + S.standalone);
+    L.push('display-mode: ' + S.display);
+    L.push('iOS: ' + S.ios + '  安卓: ' + S.android);
+    L.push('ServiceWorker: ' + S.swReg);
+    L.push('推送能力: ' + S.sw);
+    L.push('通知权限: ' + S.perm);
+    L.push('存储 配额/已用: ' + S.quota + ' / ' + S.usage);
+    L.push('持久化: ' + S.persisted + '  申请结果: ' + S.persistGranted);
+    L.push('标记: ' + S.mark);
+    L.push('订阅: ' + S.sub);
+    if (S.err.length) { L.push('--- 错误 ---'); S.err.forEach(function (e, i) { L.push('[' + (i + 1) + '] ' + e); }); }
+    return L.join('\n');
+  }
+
+  // ---------- ① 环境 + 存储 ----------
+  function openDB() {
+    return new Promise(function (res, rej) {
+      var r = indexedDB.open('morning_test', 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore('marks', { keyPath: 'id' }); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+
+  function dbMark(id, upd) {
+    return openDB().then(function (db) {
+      return new Promise(function (res, rej) {
+        var tx = db.transaction('marks', 'readwrite');
+        var st = tx.objectStore('marks');
+        var g = st.get(id);
+        g.onsuccess = function () {
+          var rec = g.result || { id: id, first: Date.now(), visits: 0 };
+          rec.visits = (rec.visits || 0) + 1;
+          rec.last = Date.now();
+          st.put(rec);
+          tx.oncomplete = function () { res(rec); };
+        };
+        g.onerror = function () { rej(g.error); };
+      });
+    });
+  }
+
+  function markText(rec) {
+    var days = (Date.now() - rec.first) / 86400000;
+    return '第 ' + rec.visits + ' 次访问 · 首次写入 ' + new Date(rec.first).toLocaleString() +
+           ' · 已存在 ' + days.toFixed(2) + ' 天' + (days >= 7 ? ' ★过了7天还在' : '');
+  }
+
+  function collect() {
+    S.standalone = (window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) ? 'yes' : 'no';
+    S.display = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) ? 'standalone' : 'browser';
+
+    var m;
+    if ((m = S.ua.match(/OS (\d+)[_.](\d+)(?:[_.](\d+))?.*?(?:Mobile|iPhone|iPad)/))) S.ios = m[1] + '.' + m[2] + (m[3] ? '.' + m[3] : '');
+    else if (/iPhone|iPad/.test(S.ua)) S.ios = '(有 iPhone/iPad 字样但版本没解析出)';
+    if ((m = S.ua.match(/Android (\d+(?:\.\d+)?)/))) S.android = m[1];
+
+    var jobs = [];
+
+    if ('serviceWorker' in navigator) {
+      jobs.push(navigator.serviceWorker.register('./sw.js').then(function (reg) {
+        S.swReg = '已注册: ' + reg.scope;
+        return navigator.serviceWorker.ready;
+      }).catch(function (e) {
+        S.swReg = '注册失败: ' + e.name + ' ' + e.message;
+        S.err.push('SW 注册: ' + e.name + ' ' + e.message);
+      }));
+    } else {
+      S.swReg = '不支持 serviceWorker';
+    }
+
+    if (navigator.storage && navigator.storage.estimate) {
+      jobs.push(navigator.storage.estimate().then(function (e) {
+        S.quota = human(e.quota); S.usage = human(e.usage);
+        S.quotaBytes = e.quota;
+      }).catch(function (e) { S.err.push('estimate: ' + e.name + ' ' + e.message); }));
+      if (navigator.storage.persisted) {
+        jobs.push(navigator.storage.persisted().then(function (p) { S.persisted = p ? 'granted' : 'not granted'; })
+          .catch(function (e) { S.err.push('persisted: ' + e.name + ' ' + e.message); }));
+      }
+    } else {
+      S.quota = '不支持 estimate()';
+    }
+
+    jobs.push(dbMark('device', true).then(function (rec) { S.mark = markText(rec); })
+      .catch(function (e) { S.mark = '写入失败: ' + e.name + ' ' + e.message; S.err.push('IDB: ' + e.name + ' ' + e.message); }));
+
+    return Promise.all(jobs);
+  }
+
+  // ---------- ③ 订阅推送 ----------
+  function urlB64ToU8(s) {
+    var pad = '='.repeat((4 - s.length % 4) % 4);
+    var b = (s + pad).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = atob(b), arr = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+
+  function subscribe() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      S.sub = '不支持推送';
+      S.err.push('订阅: 此浏览器没有 PushManager');
+      render(); return Promise.resolve();
+    }
+    return navigator.serviceWorker.ready.then(function (reg) {
+      return reg.pushManager.getSubscription().then(function (old) {
+        if (old) return old;
+        return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToU8(VAPID_PUB) });
+      });
+    }).then(function (sub) {
+      S.perm = (typeof Notification !== 'undefined') ? Notification.permission : S.perm;
+      var j = sub.toJSON();
+      S.sub = j.endpoint;
+      S.subFull = JSON.stringify(j);
+      out.textContent = dump();
+    }).catch(function (e) {
+      S.sub = '订阅失败: ' + (e && e.name) + ' — ' + (e && e.message);
+      S.err.push('订阅失败: ' + (e && e.name) + ' | ' + (e && e.message));
+    });
+  }
+
+  function bind(id, fn) {
+    document.getElementById(id).addEventListener('click', function () {
+      var b = this;
+      b.disabled = true;
+      Promise.resolve(fn()).then(function () { render(); }).catch(function (e) {
+        S.err.push('未捕获: ' + e); render();
+      }).then(function () { b.disabled = false; });
+    });
+  }
+
+  bind('btnAll', function () { out.textContent = '检测中……'; return collect(); });
+
+  bind('btnPersist', function () {
+    if (!(navigator.storage && navigator.storage.persist)) { S.persistGranted = '不支持 persist()'; return; }
+    return navigator.storage.persist().then(function (ok) {
+      S.persistGranted = ok ? '已授予 ✅' : '被拒绝 ❌（系统不保证留存）';
+      return navigator.storage.persisted ? navigator.storage.persisted().then(function (p) { S.persisted = p ? 'granted' : 'not granted'; }) : null;
+    }).catch(function (e) { S.persistGranted = '出错: ' + e.name + ' ' + e.message; S.err.push('persist: ' + e.name + ' ' + e.message); });
+  });
+
+  bind('btnSub', function () {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      return Notification.requestPermission().then(function (p) { S.perm = p; return subscribe(); });
+    }
+    return subscribe();
+  });
+
+  // ---------- 复制 ----------
+  document.getElementById('btnCopy').addEventListener('click', function () {
+    var b = this, txt = dump() + (S.subFull ? '\n\n订阅详情(JSON):\n' + S.subFull : '');
+    function ok() { b.textContent = '✅ 已复制，发回给阿布'; b.classList.add('done'); setTimeout(function () { b.textContent = '📋 复制全部结果'; b.classList.remove('done'); }, 2600); }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); ok(); } catch (e) { alert('复制失败，请长按下面的原文手动复制'); }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(ok).catch(fallback);
+    } else { fallback(); }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
