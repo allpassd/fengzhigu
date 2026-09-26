@@ -73,6 +73,13 @@
 <button id="btnCopy">📋 复制全部结果</button>
 
 <div class="card">
+  <h2>发回给阿布（二选一）</h2>
+  <p class="tip" style="margin:0 0 12px">两个加密密钥只在这两个按钮里带出来，页面上看不到 —— <b>所以请点一下，不用复制粘贴。</b></p>
+  <button id="btnShare" class="primary">📤 一键发送结果<small>弹系统分享 → 选微信 → 发给「文件传输助手」</small></button>
+  <button id="btnMail">✉️ 用邮件发送<small>备选：分享菜单里找不到微信时用</small></button>
+</div>
+
+<div class="card">
   <h2>原始结果</h2>
   <pre id="out">点①开始……</pre>
 </div>
@@ -126,7 +133,9 @@
       ['可存上限', S.quota + '（已用 ' + S.usage + '）', '-'],
       ['持久化存储', S.persisted + (S.persistGranted !== '-' ? ' → 申请后 ' + S.persistGranted : ''), S.persisted === 'granted' ? 'good' : 'warn'],
       ['标记（跨天用）', S.mark, '-'],
-      ['推送订阅', S.sub, S.sub.indexOf('https://') === 0 ? 'good' : (S.sub === '-' ? '-' : 'bad')]
+      ['推送订阅', S.sub, S.sub.indexOf('https://') === 0 ? 'good' : (S.sub === '-' ? '-' : 'bad')],
+      ['密钥 p256dh', S.keys && S.keys.p256dh ? S.keys.p256dh : '-', '-'],
+      ['密钥 auth', S.keys && S.keys.auth ? S.keys.auth : '-', '-']
     ];
     env.innerHTML = rows.map(function (r) {
       return '<div class="row"><span class="k">' + r[0] + '</span><span class="v ' + r[2] + '">' + String(r[1]).replace(/</g, '&lt;') + '</span></div>';
@@ -255,6 +264,7 @@
       var j = sub.toJSON();
       S.sub = j.endpoint;
       S.subFull = JSON.stringify(j);
+      S.keys = j.keys || null;
       out.textContent = dump();
     }).catch(function (e) {
       S.sub = '订阅失败: ' + (e && e.name) + ' — ' + (e && e.message);
@@ -304,6 +314,51 @@
       navigator.clipboard.writeText(txt).then(ok).catch(fallback);
     } else { fallback(); }
   });
+
+  // ---------- 发回给阿布 ----------
+  var MAIL = 'criv1897@agent.qq.com';
+  function fullText() {
+    return dump() + (S.subFull ? '\n\n订阅详情(JSON):\n' + S.subFull : '');
+  }
+
+  document.getElementById('btnShare').addEventListener('click', function () {
+    var b = this;
+    if (navigator.share) {
+      navigator.share({ title: '晨会 真机验证结果', text: fullText() }).then(function () {
+        b.textContent = '✅ 已发出'; b.classList.add('done');
+      }).catch(function (e) {
+        if (e && e.name === 'AbortError') return;   // 用户自己取消，不算失败
+        fallbackCopy(b);
+      });
+    } else { fallbackCopy(b); }
+  });
+
+  function fallbackCopy(b) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(fullText()).then(function () {
+        b.textContent = '✅ 这台机器不支持系统分享，已复制 —— 请手动粘贴发我';
+        b.classList.add('done');
+      }).catch(function () { alert('分享和复制都不行，请长按下面的原始结果手动选取'); });
+    } else { alert('分享和复制都不行，请长按下面的原始结果手动选取'); }
+  }
+
+  document.getElementById('btnMail').addEventListener('click', function () {
+    location.href = 'mailto:' + MAIL +
+      '?subject=' + encodeURIComponent('晨会 真机验证结果') +
+      '&body=' + encodeURIComponent(fullText());
+  });
+
+  // 打开时若已有订阅，直接读出来（不用再点③）
+  if ('serviceWorker' in navigator && 'PushManager' in window) {
+    navigator.serviceWorker.ready.then(function (reg) {
+      return reg.pushManager.getSubscription();
+    }).then(function (sub) {
+      if (!sub) return;
+      var j = sub.toJSON();
+      S.sub = j.endpoint; S.subFull = JSON.stringify(j); S.keys = j.keys || null;
+      render();
+    }).catch(function () {});
+  }
 
   render();
 })();
