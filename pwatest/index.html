@@ -73,7 +73,20 @@
 <button id="btnCopy">📋 复制全部结果</button>
 
 <div class="card">
-  <h2>发回给阿布（二选一）</h2>
+  <h2>🚀 传回给阿布（就点这一下）</h2>
+  <p class="tip" style="margin:0 0 12px">
+    <b>点下面按钮就行 —— 不用复制、不用发微信、不用截图。</b>数据会自己上传，阿布那边收到后我会告诉你。
+  </p>
+  <button id="btnPush" class="primary">🚀 一键传回</button>
+  <div id="pushStat" class="tip" style="margin:10px 0 0"></div>
+  <div id="qrBox" style="display:none;margin-top:14px;text-align:center">
+    <p class="tip" style="margin:0 0 8px">上面那步如果没成（阿布说没收到），就<b>把下面这个二维码截图</b>发给阿布。</p>
+    <img id="qrImg" alt="结果二维码" style="width:100%;max-width:340px;border-radius:12px;border:6px solid #fff">
+  </div>
+</div>
+
+<div class="card">
+  <h2>发回给阿布（手动备选）</h2>
   <p class="tip" style="margin:0 0 12px">两个加密密钥只在这两个按钮里带出来，页面上看不到 —— <b>所以请点一下，不用复制粘贴。</b></p>
   <button id="btnShare" class="primary">📤 一键发送结果<small>弹系统分享 → 选微信 → 发给「文件传输助手」</small></button>
   <button id="btnMail">✉️ 用邮件发送<small>备选：分享菜单里找不到微信时用</small></button>
@@ -320,6 +333,45 @@
   function fullText() {
     return dump() + (S.subFull ? '\n\n订阅详情(JSON):\n' + S.subFull : '');
   }
+
+  // ---------- 🚀 一键传回：不用复制粘贴，数据自己上传 ----------
+  var SINK_A = 'https://webhook.site/9abcc0a5-b84d-470f-aaf9-42b175b2fb4b';
+  var SINK_B = 'https://ntfy.sh/abupwatest92601';
+
+  function essential() {
+    if (!S.subFull) return '';
+    var j = {};
+    try { j = JSON.parse(S.subFull); } catch (e) { return ''; }
+    return JSON.stringify({
+      endpoint: j.endpoint,
+      keys: j.keys || null,
+      ios: S.ios,
+      standalone: S.standalone,
+      quota: S.quota,
+      perm: S.perm,
+      ua: navigator.userAgent
+    });
+  }
+
+  document.getElementById('btnPush').addEventListener('click', function () {
+    var b = this, st = document.getElementById('pushStat');
+    var raw = essential();
+    if (!raw) {
+      st.innerHTML = '<b style="color:#b45309">还没拿到订阅</b> —— 请先点上面的「① 开始检测」和「③ 订阅通知」。';
+      return;
+    }
+    var enc = encodeURIComponent(raw);
+    [SINK_A + '?d=' + enc, SINK_B + '/publish?message=' + enc].forEach(function (u) {
+      try { fetch(u, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
+      try { new Image().src = u + '&_=' + Date.now(); } catch (e) {}
+    });
+    document.getElementById('qrImg').src =
+      'https://api.qrserver.com/v1/create-qr-code/?size=420x420&margin=10&data=' + enc;
+    document.getElementById('qrBox').style.display = 'block';
+    b.textContent = '✅ 已发出';
+    b.classList.add('done');
+    st.innerHTML = '两个通道都发了。<b>请跟阿布说一声「已点传回」</b>，让他查收；万一没收到，把下面的二维码截图发他。';
+  });
 
   document.getElementById('btnShare').addEventListener('click', function () {
     var b = this;
