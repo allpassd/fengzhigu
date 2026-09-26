@@ -55,7 +55,12 @@
 <body>
 
 <h1>晨会 · 真机验证</h1>
-<p class="sub">这一页只做一件事：把「这台手机到底能不能自己弹通知」问清楚。结果复制发回给阿布就行。</p>
+<p class="sub">这一页只做一件事：把「这台手机到底能不能自己弹通知」问清楚。结果点「一键传回」发回给阿布就行。</p>
+
+<p id="mmWarn" style="display:none;background:#fee2e2;border:1px solid #fca5a5;color:#b91c1c;border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.55;margin:0 0 14px">
+  <b>你现在用的是微信内置浏览器 —— 这一页的结论不可信。</b><br>
+  微信不能申请网页推送权限，会得到假结论。请点右上角 <b>⋯</b> → <b>「在浏览器打开」</b>，用 Chrome / Safari 重来一遍。
+</p>
 
 <div class="card" id="envCard">
   <h2>这台手机是什么</h2>
@@ -63,8 +68,10 @@
 </div>
 
 <p class="tip">
-  <b>装到主屏再测，结果才算数。</b>步骤：用 <b>Safari</b> 打开本页 → 点底部<b>分享</b>按钮 → 滑到<b>「添加到主屏幕」</b> → 从桌面图标重新打开本页。
-  （安卓：用 Chrome 打开 → 菜单 → 「添加到主屏幕 / 安装应用」）
+  <b>装到主屏再测，结果才算数。</b><br>
+  <b>iPhone</b>：用 <b>Safari</b> 打开 → 底部<b>分享</b> → <b>「添加到主屏幕」</b> → 回桌面从图标打开。<br>
+  <b>安卓</b>：用 <b>Chrome</b> 打开本页（或扫二维码时选 Chrome）→ 右上角 <b>⋮</b> → <b>「安装应用 / 添加到主屏幕」</b> → 回桌面从图标打开。<br>
+  <b style="color:#b91c1c">务必别用微信内置浏览器（微信扫一扫）打开</b> —— 它不支持推送，结论会假。异常时页面会直接标红。
 </p>
 
 <button id="btnAll" class="primary">① 开始检测<small>环境 · 存储配额 · 推送能力</small></button>
@@ -104,8 +111,10 @@
   // 阿布的 VAPID 公钥（公开信息，不是密钥）
   var VAPID_PUB = 'BCI9EV1R-mPyOR0ViFr_S5Xszzq0M5E7Uyyf9h5f9cq9bA38Dmxvy1MruT7RjMl_osW0DVt1H1NuCa-MPLDSC_s';
 
+  var IS_MM = /MicroMessenger/i.test(navigator.userAgent);
   var S = {  // 全部检测结果
     ua: navigator.userAgent,
+    mm: IS_MM ? 'YES 微信内置浏览器' : 'no',
     secure: window.isSecureContext ? 'yes' : 'NO',
     standalone: '?',
     display: '?',
@@ -135,8 +144,10 @@
   }
 
   function render() {
+    if (IS_MM) { document.getElementById('mmWarn').style.display = 'block'; }
     var rows = [
       ['安全上下文 HTTPS', S.secure, S.secure === 'yes' ? 'good' : 'bad'],
+      ['微信内置浏览器', S.mm, S.mm === 'no' ? 'good' : 'bad'],
       ['主屏独立模式', S.standalone, S.standalone === 'yes' ? 'good' : 'warn'],
       ['iOS 版本', S.ios, '-'],
       ['安卓版本', S.android, '-'],
@@ -161,6 +172,7 @@
     L.push('=== 晨会 真机验证 ===');
     L.push('时间: ' + new Date().toString());
     L.push('UA: ' + S.ua);
+    L.push('微信内置浏览器: ' + S.mm);
     L.push('安全上下文: ' + S.secure);
     L.push('主屏独立模式(standalone): ' + S.standalone);
     L.push('display-mode: ' + S.display);
@@ -339,16 +351,27 @@
   var SINK_B = 'https://ntfy.sh/abupwatest92601';
 
   function essential() {
-    if (!S.subFull) return '';
-    var j = {};
-    try { j = JSON.parse(S.subFull); } catch (e) { return ''; }
+    var j = null;
+    try { j = S.subFull ? JSON.parse(S.subFull) : null; } catch (e) { j = null; }
     return JSON.stringify({
-      endpoint: j.endpoint,
-      keys: j.keys || null,
+      tag: 'pwatest',
+      // 订阅成功时有：地址 + 两个密钥；失败时为 null（这本身就是结论）
+      endpoint: (j && j.endpoint) || null,
+      keys: (j && j.keys) || null,
+      // 环境（安卓/iPhone 都判得出来）
       ios: S.ios,
+      android: S.android,
+      mm: S.mm,
       standalone: S.standalone,
+      display: S.display,
       quota: S.quota,
+      usage: S.usage,
+      persisted: S.persisted,
       perm: S.perm,
+      push: S.sw,
+      swReg: S.swReg,
+      subState: S.sub,
+      errs: S.err,          // ★ 失败的报错原文都在这
       ua: navigator.userAgent
     });
   }
@@ -356,10 +379,6 @@
   document.getElementById('btnPush').addEventListener('click', function () {
     var b = this, st = document.getElementById('pushStat');
     var raw = essential();
-    if (!raw) {
-      st.innerHTML = '<b style="color:#b45309">还没拿到订阅</b> —— 请先点上面的「① 开始检测」和「③ 订阅通知」。';
-      return;
-    }
     var enc = encodeURIComponent(raw);
     [SINK_A + '?d=' + enc, SINK_B + '/publish?message=' + enc].forEach(function (u) {
       try { fetch(u, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
@@ -370,7 +389,9 @@
     document.getElementById('qrBox').style.display = 'block';
     b.textContent = '✅ 已发出';
     b.classList.add('done');
-    st.innerHTML = '两个通道都发了。<b>请跟阿布说一声「已点传回」</b>，让他查收；万一没收到，把下面的二维码截图发他。';
+    st.innerHTML = S.subFull
+      ? '两个通道都发了（含订阅地址与密钥）。<b>请跟阿布说一声「已点传回」</b>，让他查收；万一没收到，把下面的二维码截图发他。'
+      : '<b style="color:#b45309">没拿到订阅，但你的环境和报错原文已经传回了</b> —— 这本身就是我要的结果。<b>跟阿布说一声「已点传回」</b>。';
   });
 
   document.getElementById('btnShare').addEventListener('click', function () {
