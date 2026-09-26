@@ -62,6 +62,11 @@
   微信不能申请网页推送权限，会得到假结论。请点右上角 <b>⋯</b> → <b>「在浏览器打开」</b>，用 Chrome / Safari 重来一遍。
 </p>
 
+<p id="noPushWarn" style="display:none;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.55;margin:0 0 14px">
+  <b>这个浏览器本身没有网页推送能力（PushManager 缺失）。</b><br>
+  这一条是 <b>浏览器</b> 的限制，<b>不能当成「安卓系统不行」</b>。请换 <b>Chrome</b>（或系统自带浏览器）再测一次，两次结果一起传回 —— 分开归因才有用。
+</p>
+
 <div class="card" id="envCard">
   <h2>这台手机是什么</h2>
   <div id="env"><div class="row"><span class="k">状态</span><span class="v">点下面①开始检测</span></div></div>
@@ -143,8 +148,19 @@
     return b + ' B';
   }
 
+  // 订阅地址落在哪个推送通道 —— 域名本身就是结论
+  function subChannel() {
+    if (!S.sub || S.sub.indexOf('https://') !== 0) return '-';
+    if (/fcm\.googleapis\.com/.test(S.sub)) return 'FCM 谷歌（大陆不通）';
+    if (/push\.apple\.com/.test(S.sub)) return 'APNs 苹果';
+    var m = S.sub.match(/^https?:\/\/([^/]+)/);
+    return '其他: ' + (m ? m[1] : '?');
+  }
+
   function render() {
     if (IS_MM) { document.getElementById('mmWarn').style.display = 'block'; }
+    if (S.sw !== 'PushManager 有') { document.getElementById('noPushWarn').style.display = 'block'; }
+    var ch = subChannel();
     var rows = [
       ['安全上下文 HTTPS', S.secure, S.secure === 'yes' ? 'good' : 'bad'],
       ['微信内置浏览器', S.mm, S.mm === 'no' ? 'good' : 'bad'],
@@ -157,6 +173,7 @@
       ['可存上限', S.quota + '（已用 ' + S.usage + '）', '-'],
       ['持久化存储', S.persisted + (S.persistGranted !== '-' ? ' → 申请后 ' + S.persistGranted : ''), S.persisted === 'granted' ? 'good' : 'warn'],
       ['标记（跨天用）', S.mark, '-'],
+      ['订阅通道', ch, ch === '-' ? '-' : (ch.indexOf('FCM') >= 0 ? 'bad' : 'good')],
       ['推送订阅', S.sub, S.sub.indexOf('https://') === 0 ? 'good' : (S.sub === '-' ? '-' : 'bad')],
       ['密钥 p256dh', S.keys && S.keys.p256dh ? S.keys.p256dh : '-', '-'],
       ['密钥 auth', S.keys && S.keys.auth ? S.keys.auth : '-', '-']
@@ -184,6 +201,7 @@
     L.push('持久化: ' + S.persisted + '  申请结果: ' + S.persistGranted);
     L.push('标记: ' + S.mark);
     L.push('订阅: ' + S.sub);
+    L.push('订阅通道: ' + subChannel());
     if (S.err.length) { L.push('--- 错误 ---'); S.err.forEach(function (e, i) { L.push('[' + (i + 1) + '] ' + e); }); }
     return L.join('\n');
   }
